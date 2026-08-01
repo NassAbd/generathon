@@ -15,7 +15,7 @@ export interface ThemePreset {
 export const THEME_PRESETS: Record<ThemeId, ThemePreset> = {
   pop_3d: {
     id: "pop_3d",
-    label: "Viral Yellow / Hormozi",
+    label: "Viral Yellow",
     description: "Bold uppercase hooks, yellow word pops, 3D badges",
     subtitleClass: "font-sans text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]",
     highlightClass: "font-bold text-yellow-300",

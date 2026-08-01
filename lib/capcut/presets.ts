@@ -54,7 +54,7 @@ export interface SubtitleStylePreset {
 export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
   pop_3d: {
     id: "pop_3d",
-    label: "Viral Yellow / Hormozi",
+    label: "Viral Yellow",
     uppercase: true,
     fontFamily: "Montserrat, Impact, Arial Black, sans-serif",
     fontNameCapCut: "Montserrat",

@@ -34,7 +34,7 @@ export default async function ProjectPage({ params }: ProjectPageProps): Promise
   }
 
   return (
-    <main className="min-h-screen bg-[#08090d]">
+    <main className="h-screen max-h-screen overflow-hidden bg-[#08090d]">
       <ProjectView project={project} />
     </main>
   );

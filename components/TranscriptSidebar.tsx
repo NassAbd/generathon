@@ -42,13 +42,13 @@ export function TranscriptSidebar({ transcript, activeWordIndex, onSeek }: Trans
   }, [activeWordIndex]);
 
   return (
-    <aside className="flex h-full min-h-[28rem] flex-col rounded-2xl border border-white/10 bg-white/[0.03]">
+    <aside className="flex h-full min-h-0 flex-col rounded-2xl border border-white/10 bg-white/[0.03]">
       <div className="border-b border-white/10 px-4 py-4">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-300">Transcript</p>
         <p className="mt-1 text-sm text-slate-400">{transcript.length} words · click to seek</p>
       </div>
 
-      <div ref={listRef} className="flex-1 overflow-y-auto px-3 py-3">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         <ul className="space-y-1">
           {transcript.map((entry, index) => {
             const isActive = index === activeWordIndex;
@@ -74,11 +74,6 @@ export function TranscriptSidebar({ transcript, activeWordIndex, onSeek }: Trans
                   >
                     {entry.word}
                   </span>
-                  {entry.highlight && (
-                    <span className="rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fuchsia-200">
-                      {entry.effect ?? "fx"}
-                    </span>
-                  )}
                 </button>
               </li>
             );

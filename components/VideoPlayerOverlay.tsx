@@ -37,10 +37,11 @@ export interface VideoPlayerOverlayProps {
   transcript: TranscriptData;
   theme: ThemeId;
   onActiveWordChange?: (index: number) => void;
+  className?: string;
 }
 
 export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlayerOverlayProps>(
-  function VideoPlayerOverlay({ videoUrl, transcript, theme, onActiveWordChange }, ref) {
+  function VideoPlayerOverlay({ videoUrl, transcript, theme, onActiveWordChange, className }, ref) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const bgmRef = useRef<HTMLAudioElement>(null);
     const sfxManagerRef = useRef(new SfxManager());
@@ -204,11 +205,17 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
     return (
       <div
         data-theme={theme}
-        className={`relative isolate overflow-hidden rounded-2xl border border-white/10 bg-black shadow-glow ${subtitlePreset.overlayShellClass}`}
+        className={[
+          "relative isolate mx-auto overflow-hidden rounded-2xl border border-white/10 bg-black shadow-glow",
+          subtitlePreset.overlayShellClass,
+          className,
+        ]
+          .filter(Boolean)
+          .join(" ")}
       >
         <video
           ref={videoRef}
-          className="relative z-0 aspect-[9/16] w-full bg-black object-contain"
+          className="relative z-0 h-full max-h-full w-full bg-black object-contain aspect-[9/16]"
           src={videoUrl}
           controls
           playsInline

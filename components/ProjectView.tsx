@@ -1,9 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 
 import { CopyShareLinkButton } from "@/components/CopyShareLinkButton";
-import { ExportCapCutButton } from "@/components/ExportCapCutButton";
 import { ExportCapCutLocalButton } from "@/components/ExportCapCutLocalButton";
 import { ThemeSelector } from "@/components/ThemeSelector";
 import { TranscriptSidebar } from "@/components/TranscriptSidebar";
@@ -17,6 +17,7 @@ export interface ProjectViewProps {
 }
 
 export function ProjectView({ project }: ProjectViewProps): JSX.Element {
+  const router = useRouter();
   const playerRef = useRef<VideoPlayerOverlayHandle>(null);
   const [theme, setTheme] = useState<ThemeId>(project.theme);
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
@@ -36,42 +37,55 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
   }, []);
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-10">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
+    <div className="mx-auto flex h-screen max-h-screen w-full max-w-7xl flex-col overflow-hidden p-4 md:p-6">
+      <header className="flex shrink-0 flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div className="min-w-0">
           <p className={`text-sm font-semibold uppercase tracking-[0.22em] ${themePreset.accentLabelClass}`}>
             Pitch Preview
           </p>
-          <h1 className="mt-2 text-3xl font-bold text-white">Synchronized overlay playback</h1>
-          <p className="mt-2 text-sm text-slate-400">
+          <h1 className="mt-1 text-2xl font-bold text-white md:text-3xl">Synchronized overlay playback</h1>
+          <p className="mt-1 truncate text-sm text-slate-400">
             {themePreset.label} theme · {transcript.length} words · project {project.id.slice(0, 8)}…
           </p>
         </div>
 
-        <div className="flex flex-wrap items-start gap-3">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3">
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="rounded-xl border border-white/15 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white transition hover:border-violet-400/40 hover:bg-white/[0.07]"
+          >
+            + Transcribe Other
+          </button>
           <ExportCapCutLocalButton projectId={project.id} themeId={theme} />
           <CopyShareLinkButton projectId={project.id} />
-          <ExportCapCutButton projectId={project.id} themeId={theme} />
         </div>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
-        <div className="space-y-4">
-          <VideoPlayerOverlay
-            ref={playerRef}
-            videoUrl={project.video_url}
-            transcript={transcript}
-            theme={theme}
-            onActiveWordChange={setActiveWordIndex}
-          />
-          <ThemeSelector value={theme} onChange={(nextTheme) => void handleThemeChange(nextTheme)} />
+      <div className="mt-4 grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden md:grid-cols-12 md:gap-6">
+        <div className="flex min-h-0 flex-col gap-3 md:col-span-7">
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+            <VideoPlayerOverlay
+              ref={playerRef}
+              videoUrl={project.video_url}
+              transcript={transcript}
+              theme={theme}
+              onActiveWordChange={setActiveWordIndex}
+              className="h-full max-h-[calc(100vh-11rem)] w-auto"
+            />
+          </div>
+          <div className="shrink-0">
+            <ThemeSelector value={theme} onChange={(nextTheme) => void handleThemeChange(nextTheme)} />
+          </div>
         </div>
 
-        <TranscriptSidebar
-          transcript={transcript}
-          activeWordIndex={activeWordIndex}
-          onSeek={handleSeek}
-        />
+        <div className="min-h-0 md:col-span-5">
+          <TranscriptSidebar
+            transcript={transcript}
+            activeWordIndex={activeWordIndex}
+            onSeek={handleSeek}
+          />
+        </div>
       </div>
     </div>
   );
