@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 
+import type { ThemeId } from "@/types/theme";
+
 export interface ExportCapCutLocalButtonProps {
   projectId: string;
+  themeId: ThemeId;
 }
 
-export function ExportCapCutLocalButton({ projectId }: ExportCapCutLocalButtonProps): JSX.Element {
+export function ExportCapCutLocalButton({ projectId, themeId }: ExportCapCutLocalButtonProps): JSX.Element {
   const [isExporting, setIsExporting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +23,7 @@ export function ExportCapCutLocalButton({ projectId }: ExportCapCutLocalButtonPr
       const response = await fetch("/api/export-capcut-local", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({ projectId, themeId }),
       });
 
       const payload = (await response.json()) as { error?: string; message?: string };

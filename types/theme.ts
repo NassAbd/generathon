@@ -54,3 +54,14 @@ export function parseThemeId(value: string | null | undefined): ThemeId {
   }
   return "pop_3d";
 }
+
+/** Prefer the live UI theme from the export request; fall back to persisted project theme. */
+export function resolveExportThemeId(
+  requestThemeId: string | null | undefined,
+  projectTheme: string | null | undefined,
+): ThemeId {
+  if (requestThemeId === "cyberpunk" || requestThemeId === "minimal_tech" || requestThemeId === "pop_3d") {
+    return requestThemeId;
+  }
+  return parseThemeId(projectTheme);
+}

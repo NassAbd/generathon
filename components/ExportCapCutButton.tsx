@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 
+import type { ThemeId } from "@/types/theme";
+
 export interface ExportCapCutButtonProps {
   projectId: string;
+  themeId: ThemeId;
 }
 
-export function ExportCapCutButton({ projectId }: ExportCapCutButtonProps): JSX.Element {
+export function ExportCapCutButton({ projectId, themeId }: ExportCapCutButtonProps): JSX.Element {
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -15,7 +18,9 @@ export function ExportCapCutButton({ projectId }: ExportCapCutButtonProps): JSX.
     setError(null);
 
     try {
-      const response = await fetch(`/api/export-capcut?projectId=${encodeURIComponent(projectId)}`);
+      const response = await fetch(
+        `/api/export-capcut?projectId=${encodeURIComponent(projectId)}&themeId=${encodeURIComponent(themeId)}`,
+      );
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;

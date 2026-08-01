@@ -4,11 +4,14 @@ import { NextRequest } from "next/server";
 import { buildCapCutDraft } from "@/lib/capcut/exportDraft";
 import { fetchProjectById } from "@/lib/projects/fetchProject";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { parseThemeId } from "@/types/theme";
+import { resolveExportThemeId, type ThemeId } from "@/types/theme";
 
 export const runtime = "nodejs";
 
-async function buildExportZip(projectId: string): Promise<{ buffer: Buffer; filename: string }> {
+async function buildExportZip(
+  projectId: string,
+  requestThemeId?: string | null,
+): Promise<{ buffer: Buffer; filename: string }> {
   const project = await fetchProjectById(projectId);
   if (!project) {
     throw new Error("Project not found.");
@@ -22,13 +25,14 @@ async function buildExportZip(projectId: string): Promise<{ buffer: Buffer; file
     project.duration_seconds ??
     project.transcript_data.reduce((maxEnd, entry) => Math.max(maxEnd, entry.end), 0);
 
+  const exportTheme: ThemeId = resolveExportThemeId(requestThemeId, project.theme);
   const { draftContent, readme } = buildCapCutDraft({
     projectId: project.id,
     projectName: `Motion Decorator ${project.id.slice(0, 8)}`,
     videoUrl: project.video_url,
     transcript: project.transcript_data,
     durationSeconds,
-    theme: parseThemeId(project.theme),
+    theme: exportTheme,
   });
 
   const zip = new JSZip();
@@ -58,7 +62,8 @@ export async function GET(request: NextRequest): Promise<Response> {
       return errorResponse("Missing projectId query parameter.", 400);
     }
 
-    const { buffer, filename } = await buildExportZip(projectId);
+    const themeId = request.nextUrl.searchParams.get("themeId");
+    const { buffer, filename } = await buildExportZip(projectId, themeId);
     return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/zip",
@@ -74,12 +79,12 @@ export async function GET(request: NextRequest): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const body = (await request.json()) as { projectId?: string };
+    const body = (await request.json()) as { projectId?: string; themeId?: string };
     if (!body.projectId) {
       return errorResponse("Expected { projectId }.", 400);
     }
 
-    const { buffer, filename } = await buildExportZip(body.projectId);
+    const { buffer, filename } = await buildExportZip(body.projectId, body.themeId);
     return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/zip",

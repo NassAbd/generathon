@@ -1,12 +1,13 @@
 import { writeDirectToCapCut } from "@/lib/capcut/exportDraft";
 import { fetchProjectById } from "@/lib/projects/fetchProject";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { parseThemeId } from "@/types/theme";
+import { resolveExportThemeId } from "@/types/theme";
 
 export const runtime = "nodejs";
 
 interface ExportCapCutLocalRequest {
   projectId: string;
+  themeId?: string;
 }
 
 function errorResponse(message: string, status: number): Response {
@@ -33,6 +34,7 @@ export async function POST(request: Request): Promise<Response> {
       project.duration_seconds ??
       project.transcript_data.reduce((maxEnd, entry) => Math.max(maxEnd, entry.end), 0);
 
+    const exportTheme = resolveExportThemeId(body.themeId, project.theme);
     const projectName = "Motion Decorator Project";
     const result = await writeDirectToCapCut(project.id, {
       projectId: project.id,
@@ -40,7 +42,7 @@ export async function POST(request: Request): Promise<Response> {
       videoUrl: project.video_url,
       transcript: project.transcript_data,
       durationSeconds,
-      theme: parseThemeId(project.theme),
+      theme: exportTheme,
     });
 
     const supabase = getSupabaseServerClient();

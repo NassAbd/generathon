@@ -49,9 +49,9 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
         </div>
 
         <div className="flex flex-wrap items-start gap-3">
-          <ExportCapCutLocalButton projectId={project.id} />
+          <ExportCapCutLocalButton projectId={project.id} themeId={theme} />
           <CopyShareLinkButton projectId={project.id} />
-          <ExportCapCutButton projectId={project.id} />
+          <ExportCapCutButton projectId={project.id} themeId={theme} />
         </div>
       </header>
 

@@ -4,11 +4,12 @@ import path from "node:path";
 import { normalizeAssetUrl } from "@/lib/assets/catalog";
 import {
   buildCapCutSubtitleSegmentPlans,
+  buildCapCutWordEffectExportPlan,
   getCapCutTextMaterialProps,
   getSubtitlePreset,
   type SubtitleStylePreset,
 } from "@/lib/capcut/presets";
-import type { TranscriptData } from "@/types/transcript";
+import type { TranscriptData, WordEffect } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
 
 const MICROSECONDS = 1_000_000;
@@ -226,6 +227,35 @@ function baseSegment(
     uniform_scale: { on: true, value: 1 },
     group_id: "",
   };
+}
+
+function applyTextWordEffect(
+  textSegment: DraftRecord,
+  materials: DraftRecord,
+  effect: WordEffect,
+  textScale: number,
+  segmentDurationMicros: number,
+  theme: ThemeId,
+): void {
+  const plan = buildCapCutWordEffectExportPlan(effect, textScale, segmentDurationMicros, theme);
+
+  if (plan.keyframes.length > 0) {
+    textSegment.common_keyframes = plan.keyframes;
+  }
+
+  const extraRefs = textSegment.extra_material_refs;
+  if (!Array.isArray(extraRefs)) {
+    return;
+  }
+
+  const animationPlans = [plan.introAnimation, plan.loopAnimation].filter(
+    (entry): entry is NonNullable<typeof entry> => entry !== undefined,
+  );
+
+  for (const animationPlan of animationPlans) {
+    pushMaterial(materials, "material_animations", animationPlan.material);
+    extraRefs.push(animationPlan.materialId);
+  }
 }
 
 function applyTextSegmentLayout(textSegment: DraftRecord, preset: SubtitleStylePreset): void {
@@ -732,6 +762,16 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       15000,
     );
     applyTextSegmentLayout(textSegment, subtitlePreset);
+    if (entry.effect) {
+      applyTextWordEffect(
+        textSegment,
+        materials,
+        entry.effect,
+        subtitlePreset.textScale,
+        duration,
+        input.theme,
+      );
+    }
     (textTrack.segments as DraftRecord[]).push(textSegment);
 
     const assetUrl = normalizeAssetUrl(entry.asset_url);

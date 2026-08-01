@@ -1,5 +1,7 @@
-import type { TranscriptData } from "@/types/transcript";
+import type { TranscriptData, WordEffect } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
+
+type DraftRecord = Record<string, unknown>;
 
 export type RgbColor = [number, number, number];
 
@@ -401,6 +403,286 @@ export function getCapCutTextMaterialProps(
     is_rich_text: true,
     use_effect_default_color: false,
   };
+}
+
+export interface CapCutTextAnimCatalogEntry {
+  slug: string;
+  title: string;
+  effect_id: string;
+  resource_id: string;
+  md5: string;
+  default_duration_us: number;
+}
+
+/** CapCut text intro / loop animation catalogue entries (capcut-cli enums). */
+export const CAPCUT_TEXT_ANIM_CATALOG: Record<string, CapCutTextAnimCatalogEntry> = {
+  "bounce-in": {
+    slug: "bounce-in",
+    title: "Bounce In",
+    effect_id: "6887766069587481090",
+    resource_id: "6887766069587481090",
+    md5: "83cd5b21c6a1cea2d11aac09bf328d1b",
+    default_duration_us: 500_000,
+  },
+  "pop-up": {
+    slug: "pop-up",
+    title: "Pop Up",
+    effect_id: "7145435451946439170",
+    resource_id: "7145435451946439170",
+    md5: "28d9145ead32c23742082a37e511370e",
+    default_duration_us: 500_000,
+  },
+  wobble: {
+    slug: "wobble",
+    title: "Wobble",
+    effect_id: "7095603439912096258",
+    resource_id: "7095603439912096258",
+    md5: "d9099a94194f6a60366a2115ecca7646",
+    default_duration_us: 500_000,
+  },
+  glitch: {
+    slug: "glitch",
+    title: "Glitch",
+    effect_id: "7077812383946641921",
+    resource_id: "7077812383946641921",
+    md5: "de64c5a073e2517b8d5a07244034fc62",
+    default_duration_us: 500_000,
+  },
+  blur: {
+    slug: "blur",
+    title: "Blur",
+    effect_id: "6923135604519604737",
+    resource_id: "6923135604519604737",
+    md5: "a5f4d3998c0648ec65c03251506bd0a0",
+    default_duration_us: 500_000,
+  },
+  pulse: {
+    slug: "pulse",
+    title: "Pulse",
+    effect_id: "6724919955654971918",
+    resource_id: "6724919955654971918",
+    md5: "1b9a454256f041c19f723ba27358740b",
+    default_duration_us: 500_000,
+  },
+};
+
+export interface CapCutTextAnimationMaterialPlan {
+  material: DraftRecord;
+  materialId: string;
+}
+
+export interface CapCutWordEffectExportPlan {
+  keyframes: DraftRecord[];
+  introAnimation?: CapCutTextAnimationMaterialPlan;
+  loopAnimation?: CapCutTextAnimationMaterialPlan;
+}
+
+function createCapCutKeyframePoint(timeOffsetMicros: number, values: number[]): DraftRecord {
+  return {
+    id: crypto.randomUUID(),
+    time_offset: timeOffsetMicros,
+    values,
+    curveType: "Line",
+  };
+}
+
+function createCapCutKeyframeTrack(propertyType: string, points: DraftRecord[]): DraftRecord {
+  return {
+    id: crypto.randomUUID(),
+    property_type: propertyType,
+    keyframe_list: points,
+  };
+}
+
+function clampEffectDuration(requestedMicros: number, segmentDurationMicros: number): number {
+  return Math.max(80_000, Math.min(requestedMicros, segmentDurationMicros));
+}
+
+/** Pop/bounce scale keyframes — punchy 0.6× → 1.4× → 1.0× textScale pop. */
+export function buildPopBounceScaleKeyframes(textScale: number): DraftRecord[] {
+  const settleScale = Number((textScale * 1.0).toFixed(4));
+  const startScale = Number((textScale * 0.6).toFixed(4));
+  const peakScale = Number((textScale * 1.4).toFixed(4));
+
+  return [
+    createCapCutKeyframeTrack("KFTypeUniformScale", [
+      createCapCutKeyframePoint(0, [startScale]),
+      createCapCutKeyframePoint(100_000, [peakScale]),
+      createCapCutKeyframePoint(200_000, [settleScale]),
+    ]),
+  ];
+}
+
+/** Horizontal shake keyframes — ±0.05 normalized canvas units for visible motion. */
+export function buildShakePositionKeyframes(
+  segmentDurationMicros: number,
+  amplitude = 0.05,
+): DraftRecord[] {
+  const shakeDuration = clampEffectDuration(350_000, segmentDurationMicros);
+  const quarter = Math.round(shakeDuration / 4);
+  const half = Math.round(shakeDuration / 2);
+  const threeQuarter = Math.round((shakeDuration * 3) / 4);
+
+  return [
+    createCapCutKeyframeTrack("KFTypePositionX", [
+      createCapCutKeyframePoint(0, [0]),
+      createCapCutKeyframePoint(quarter, [-amplitude]),
+      createCapCutKeyframePoint(half, [amplitude]),
+      createCapCutKeyframePoint(threeQuarter, [-amplitude]),
+      createCapCutKeyframePoint(shakeDuration, [0]),
+    ]),
+  ];
+}
+
+/** Glow double-pulse scale keyframes — 1.0× → 1.25× → 1.0× → 1.25× → 1.0×. */
+export function buildGlowScaleKeyframes(textScale: number, segmentDurationMicros: number): DraftRecord[] {
+  const pulseDuration = clampEffectDuration(800_000, segmentDurationMicros);
+  const quarter = Math.round(pulseDuration / 4);
+  const half = Math.round(pulseDuration / 2);
+  const threeQuarter = Math.round((pulseDuration * 3) / 4);
+  const baseScale = Number(textScale.toFixed(4));
+  const peakScale = Number((textScale * 1.25).toFixed(4));
+
+  const tracks: DraftRecord[] = [
+    createCapCutKeyframeTrack("KFTypeUniformScale", [
+      createCapCutKeyframePoint(0, [baseScale]),
+      createCapCutKeyframePoint(quarter, [peakScale]),
+      createCapCutKeyframePoint(half, [baseScale]),
+      createCapCutKeyframePoint(threeQuarter, [peakScale]),
+      createCapCutKeyframePoint(pulseDuration, [baseScale]),
+    ]),
+  ];
+
+  if (pulseDuration >= 200_000) {
+    tracks.push(
+      createCapCutKeyframeTrack("KFTypePositionX", [
+        createCapCutKeyframePoint(0, [0]),
+        createCapCutKeyframePoint(Math.round(pulseDuration * 0.2), [-0.02]),
+        createCapCutKeyframePoint(Math.round(pulseDuration * 0.4), [0.02]),
+        createCapCutKeyframePoint(Math.round(pulseDuration * 0.6), [-0.015]),
+        createCapCutKeyframePoint(pulseDuration, [0]),
+      ]),
+    );
+  }
+
+  return tracks;
+}
+
+export function buildCapCutTextEffectKeyframes(
+  effect: WordEffect,
+  textScale: number,
+  segmentDurationMicros: number,
+  theme: ThemeId,
+): DraftRecord[] {
+  switch (effect) {
+    case "bounce":
+      return buildPopBounceScaleKeyframes(textScale);
+    case "shake":
+      return buildShakePositionKeyframes(segmentDurationMicros);
+    case "glow":
+      return theme === "cyberpunk"
+        ? [
+            ...buildGlowScaleKeyframes(textScale, segmentDurationMicros),
+            ...buildShakePositionKeyframes(Math.min(segmentDurationMicros, 450_000), 0.05),
+          ]
+        : buildGlowScaleKeyframes(textScale, segmentDurationMicros);
+    default:
+      return [];
+  }
+}
+
+export function createCapCutTextAnimationMaterial(
+  catalogEntry: CapCutTextAnimCatalogEntry,
+  options: {
+    animType: "in" | "group";
+    durationMicros: number;
+    startMicros?: number;
+    materialId?: string;
+  },
+): CapCutTextAnimationMaterialPlan {
+  const materialId = options.materialId ?? crypto.randomUUID();
+  const categoryName = options.animType === "in" ? "ruchang" : "zuhe";
+
+  return {
+    materialId,
+    material: {
+      id: materialId,
+      type: "sticker_animation",
+      multi_language_current: "none",
+      animations: [
+        {
+          anim_adjust_params: null,
+          category_id: "",
+          category_name: categoryName,
+          duration: options.durationMicros,
+          id: catalogEntry.effect_id,
+          material_type: "text",
+          name: catalogEntry.title,
+          panel: "text",
+          path: "",
+          platform: "all",
+          request_id: "",
+          resource_id: catalogEntry.resource_id,
+          source_platform: 1,
+          start: options.startMicros ?? 0,
+          third_resource_id: catalogEntry.resource_id,
+          type: options.animType,
+        },
+      ],
+    },
+  };
+}
+
+const WORD_EFFECT_INTRO_DURATIONS: Record<WordEffect, number> = {
+  bounce: 250_000,
+  shake: 350_000,
+  glow: 300_000,
+};
+
+function resolveIntroCatalogEntry(effect: WordEffect, theme: ThemeId): CapCutTextAnimCatalogEntry {
+  switch (effect) {
+    case "bounce":
+      return CAPCUT_TEXT_ANIM_CATALOG["bounce-in"];
+    case "shake":
+      return CAPCUT_TEXT_ANIM_CATALOG.wobble;
+    case "glow":
+      return theme === "cyberpunk"
+        ? CAPCUT_TEXT_ANIM_CATALOG.glitch
+        : CAPCUT_TEXT_ANIM_CATALOG.blur;
+    default:
+      return CAPCUT_TEXT_ANIM_CATALOG["pop-up"];
+  }
+}
+
+/** Builds native CapCut keyframes + optional sticker_animation materials for a word effect. */
+export function buildCapCutWordEffectExportPlan(
+  effect: WordEffect,
+  textScale: number,
+  segmentDurationMicros: number,
+  theme: ThemeId,
+): CapCutWordEffectExportPlan {
+  const keyframes = buildCapCutTextEffectKeyframes(effect, textScale, segmentDurationMicros, theme);
+  const introDuration = clampEffectDuration(
+    WORD_EFFECT_INTRO_DURATIONS[effect],
+    segmentDurationMicros,
+  );
+  const introAnimation = createCapCutTextAnimationMaterial(resolveIntroCatalogEntry(effect, theme), {
+    animType: "in",
+    durationMicros: introDuration,
+    startMicros: 0,
+  });
+
+  let loopAnimation: CapCutTextAnimationMaterialPlan | undefined;
+  if (effect === "glow" && segmentDurationMicros > introDuration + 100_000) {
+    const loopDuration = segmentDurationMicros - introDuration;
+    loopAnimation = createCapCutTextAnimationMaterial(CAPCUT_TEXT_ANIM_CATALOG.pulse, {
+      animType: "group",
+      durationMicros: loopDuration,
+      startMicros: introDuration,
+    });
+  }
+
+  return { keyframes, introAnimation, loopAnimation };
 }
 
 export function getWebSubtitleWordStyle(
