@@ -9,10 +9,12 @@ import {
 } from "@/lib/assets/catalog";
 import { collectSfxUrls, preloadImageAssets } from "@/lib/player/preloadAssets";
 import { SfxManager } from "@/lib/player/sfxManager";
-import { findActiveWordIndex, getPhraseWindow, normalizeTranscript } from "@/lib/player/transcriptIndex";
+import { findActiveWordIndex, normalizeTranscript } from "@/lib/player/transcriptIndex";
 import type { TranscriptData, TranscriptWord } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
 import {
+  getPhraseBlockStartIndex,
+  getPhraseWordsForIndex,
   getSubtitlePreset,
   getWebSubtitleWordStyle,
   formatPhraseDisplayWord,
@@ -95,7 +97,8 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
 
     const [activeWordIndex, setActiveWordIndex] = useState(-1);
     const activeWord = activeWordIndex >= 0 ? normalizedTranscript[activeWordIndex] : null;
-    const phrase = getPhraseWindow(normalizedTranscript, activeWordIndex, subtitlePreset.phraseRadius);
+    const phrase = getPhraseWordsForIndex(normalizedTranscript, activeWordIndex, subtitlePreset);
+    const phraseBlockStart = getPhraseBlockStartIndex(activeWordIndex, subtitlePreset.phraseBlockSize);
 
     const applyActiveIndex = useCallback(
       (nextIndex: number) => {
@@ -227,7 +230,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
             }}
           >
             <div
-              key={theme}
+              key={`${theme}-chunk-${phraseBlockStart}`}
               className="inline-flex max-w-[92%] flex-wrap items-center justify-center gap-x-2 gap-y-1 px-2"
             >
               {phrase.length === 0 ? (
@@ -240,6 +243,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
               ) : (
                 phrase.map((entry) => {
                   const isActive = entry.index === activeWordIndex;
+                  const transcriptWord = normalizedTranscript[entry.index];
                   const fontSizePx = isActive
                     ? subtitlePreset.webFontSizePx * subtitlePreset.activeWordScale
                     : subtitlePreset.webFontSizePx;
@@ -248,8 +252,10 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
                     <span
                       key={entry.index}
                       className={[
-                        "inline-block origin-center transition-all duration-150",
-                        isActive && entry.effect ? effectClass(entry.effect as TranscriptWord["effect"], theme) : "",
+                        "inline-block origin-center transition-colors duration-150",
+                        isActive && transcriptWord.effect
+                          ? effectClass(transcriptWord.effect as TranscriptWord["effect"], theme)
+                          : "",
                         isActive ? "scale-110" : "scale-100",
                       ]
                         .filter(Boolean)

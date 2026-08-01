@@ -1,4 +1,3 @@
-import { getPhraseWindow } from "@/lib/player/transcriptIndex";
 import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
 
@@ -41,7 +40,8 @@ export interface SubtitleStylePreset {
   webAssetSizePx: number;
   /** Web overlay: inactive word font size in px. */
   webFontSizePx: number;
-  phraseRadius: number;
+  /** Fixed subtitle block size — words are grouped [0,1,2], [3,4,5], … */
+  phraseBlockSize: number;
   lineMaxWidth: number;
   letterSpacing: number;
   inactiveOpacity: number;
@@ -77,7 +77,7 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     webAssetTop: 0.52,
     webAssetSizePx: 100,
     webFontSizePx: 13,
-    phraseRadius: 1,
+    phraseBlockSize: 3,
     lineMaxWidth: 0.82,
     letterSpacing: 0.02,
     inactiveOpacity: 0.72,
@@ -111,7 +111,7 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     webAssetTop: 0.52,
     webAssetSizePx: 100,
     webFontSizePx: 12,
-    phraseRadius: 1,
+    phraseBlockSize: 3,
     lineMaxWidth: 0.8,
     letterSpacing: 0.04,
     inactiveOpacity: 0.68,
@@ -145,7 +145,7 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     webAssetTop: 0.52,
     webAssetSizePx: 100,
     webFontSizePx: 12,
-    phraseRadius: 1,
+    phraseBlockSize: 3,
     lineMaxWidth: 0.78,
     letterSpacing: 0,
     inactiveOpacity: 0.78,
@@ -194,16 +194,46 @@ function buildTextStyleRange(
   };
 }
 
+export function getPhraseBlockStartIndex(wordIndex: number, blockSize: number): number {
+  if (wordIndex < 0) {
+    return 0;
+  }
+
+  return Math.floor(wordIndex / blockSize) * blockSize;
+}
+
+/** Returns the fixed word block containing `activeIndex` (e.g. indices 0–2, 3–5, …). */
+export function getFixedPhraseBlock(
+  transcript: TranscriptData,
+  activeIndex: number,
+  preset: SubtitleStylePreset,
+): PhraseWord[] {
+  if (activeIndex < 0 || transcript.length === 0) {
+    return [];
+  }
+
+  const blockSize = preset.phraseBlockSize;
+  const chunkStart = getPhraseBlockStartIndex(activeIndex, blockSize);
+  const chunkEnd = Math.min(transcript.length - 1, chunkStart + blockSize - 1);
+  const phraseWords: PhraseWord[] = [];
+
+  for (let index = chunkStart; index <= chunkEnd; index += 1) {
+    phraseWords.push({
+      index,
+      word: transcript[index].word,
+      isActive: index === activeIndex,
+    });
+  }
+
+  return phraseWords;
+}
+
 export function getPhraseWordsForIndex(
   transcript: TranscriptData,
   activeIndex: number,
   preset: SubtitleStylePreset,
 ): PhraseWord[] {
-  return getPhraseWindow(transcript, activeIndex, preset.phraseRadius).map((entry) => ({
-    index: entry.index,
-    word: entry.word,
-    isActive: entry.index === activeIndex,
-  }));
+  return getFixedPhraseBlock(transcript, activeIndex, preset);
 }
 
 export function formatPhraseDisplayWord(word: string, preset: SubtitleStylePreset): string {
