@@ -28,6 +28,9 @@ import {
 } from "@/lib/capcut/presets";
 import {
   needsBackgroundBlurLayer,
+  WEB_BACKGROUND_BLUR_CLASS,
+  WEB_BACKGROUND_BRIGHTNESS_CLASS,
+  WEB_BACKGROUND_OVERLAY_CLASS,
 } from "@/lib/capcut/video-effects";
 
 export interface VideoSourceDimensions {
@@ -61,7 +64,6 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
     const sfxManagerRef = useRef(new SfxManager());
     const activeIndexRef = useRef(-1);
     const videoDimensionsRef = useRef<VideoSourceDimensions | null>(null);
-    const needsBackgroundBlurRef = useRef(false);
     const triggeredKeywordSfxRef = useRef<Set<number>>(new Set());
     const rafRef = useRef<number | null>(null);
     const onActiveWordChangeRef = useRef(onActiveWordChange);
@@ -78,7 +80,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
 
     const syncBackgroundVideo = useCallback((video: HTMLVideoElement) => {
       const backgroundVideo = backgroundVideoRef.current;
-      if (!backgroundVideo) {
+      if (!backgroundVideo || !needsBackgroundBlurLayer(video.videoWidth, video.videoHeight)) {
         return;
       }
 
@@ -154,6 +156,10 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       }
     }, [normalizedTranscript]);
 
+    const applyBackgroundBlurState = useCallback((width: number, height: number) => {
+      setNeedsBackgroundBlur(needsBackgroundBlurLayer(width, height));
+    }, []);
+
     const captureVideoDimensions = useCallback(() => {
       const video = videoRef.current;
       if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
@@ -165,6 +171,8 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
         height: video.videoHeight,
       };
 
+      applyBackgroundBlurState(nextDimensions.width, nextDimensions.height);
+
       const previousDimensions = videoDimensionsRef.current;
       if (
         previousDimensions?.width === nextDimensions.width &&
@@ -174,12 +182,8 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       }
 
       videoDimensionsRef.current = nextDimensions;
-
-      const shouldBlur = needsBackgroundBlurLayer(nextDimensions.width, nextDimensions.height);
-      needsBackgroundBlurRef.current = shouldBlur;
-      setNeedsBackgroundBlur(shouldBlur);
       onVideoDimensionsChangeRef.current?.(nextDimensions.width, nextDimensions.height);
-    }, []);
+    }, [applyBackgroundBlurState]);
 
     useImperativeHandle(ref, () => ({
       seekTo(seconds: number) {
@@ -247,6 +251,10 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
         syncBackgroundVideo(video);
       };
 
+      const handleSeeking = (): void => {
+        syncBackgroundVideo(video);
+      };
+
       const handleSeeked = (): void => {
         resetAudioForSeek(video.currentTime);
         syncToVideoTime(video.currentTime);
@@ -265,6 +273,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       video.addEventListener("timeupdate", handleTimeUpdate);
       video.addEventListener("play", handlePlay);
       video.addEventListener("pause", handlePause);
+      video.addEventListener("seeking", handleSeeking);
       video.addEventListener("seeked", handleSeeked);
       video.addEventListener("volumechange", handleVolumeChange);
       video.addEventListener("loadedmetadata", captureVideoDimensions);
@@ -277,6 +286,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
         video.removeEventListener("timeupdate", handleTimeUpdate);
         video.removeEventListener("play", handlePlay);
         video.removeEventListener("pause", handlePause);
+        video.removeEventListener("seeking", handleSeeking);
         video.removeEventListener("seeked", handleSeeked);
         video.removeEventListener("volumechange", handleVolumeChange);
         video.removeEventListener("loadedmetadata", captureVideoDimensions);
@@ -292,6 +302,30 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       syncVideoAudioMix,
     ]);
 
+    useEffect(() => {
+      const video = videoRef.current;
+      const backgroundVideo = backgroundVideoRef.current;
+      if (!video || !backgroundVideo || !needsBackgroundBlur) {
+        return;
+      }
+
+      const syncFromBackgroundReady = (): void => {
+        backgroundVideo.currentTime = video.currentTime;
+        if (!video.paused) {
+          void backgroundVideo.play().catch(() => undefined);
+        }
+      };
+
+      backgroundVideo.addEventListener("loadedmetadata", syncFromBackgroundReady);
+      if (backgroundVideo.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        syncFromBackgroundReady();
+      }
+
+      return () => {
+        backgroundVideo.removeEventListener("loadedmetadata", syncFromBackgroundReady);
+      };
+    }, [needsBackgroundBlur, videoUrl]);
+
     return (
       <div
         data-theme={theme}
@@ -303,29 +337,41 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
           .filter(Boolean)
           .join(" ")}
       >
-        <video
-          ref={backgroundVideoRef}
-          aria-hidden
-          className={[
-            "pointer-events-none absolute inset-0 z-0 h-full w-full object-cover transition-opacity duration-150",
-            needsBackgroundBlur || needsBackgroundBlurRef.current
-              ? "scale-110 opacity-100 blur-[24px] brightness-[0.6]"
-              : "opacity-0",
-          ].join(" ")}
-          src={videoUrl}
-          muted
-          playsInline
-          preload="auto"
-        />
+        <div className="relative h-full w-full overflow-hidden">
+          {needsBackgroundBlur ? (
+            <>
+              <video
+                ref={backgroundVideoRef}
+                aria-hidden
+                className={[
+                  "pointer-events-none absolute inset-0 z-0 h-full w-full scale-125 object-cover",
+                  WEB_BACKGROUND_BLUR_CLASS,
+                  WEB_BACKGROUND_BRIGHTNESS_CLASS,
+                ].join(" ")}
+                src={videoUrl}
+                muted
+                playsInline
+                preload="auto"
+              />
+              <div
+                aria-hidden
+                className={[
+                  "pointer-events-none absolute inset-0 z-[5]",
+                  WEB_BACKGROUND_OVERLAY_CLASS,
+                ].join(" ")}
+              />
+            </>
+          ) : null}
 
-        <video
-          ref={videoRef}
-          className="relative z-10 h-full max-h-full w-full bg-black object-contain aspect-[9/16]"
-          src={videoUrl}
-          controls
-          playsInline
-          preload="auto"
-        />
+          <video
+            ref={videoRef}
+            className="relative z-10 h-full max-h-full w-full bg-transparent object-contain aspect-[9/16]"
+            src={videoUrl}
+            controls
+            playsInline
+            preload="auto"
+          />
+        </div>
 
         <audio
           ref={bgmRef}

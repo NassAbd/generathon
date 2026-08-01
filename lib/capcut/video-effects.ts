@@ -7,8 +7,16 @@ export const CAPCUT_CANVAS_RATIO = "9:16";
 /** Width/height above native 9:16 (~0.5625) triggers letterbox background blur. */
 export const BACKGROUND_BLUR_ASPECT_THRESHOLD = 0.6;
 
-/** CapCut canvas blur strength for letterbox background fill (0–1). */
+/** CapCut canvas blur strength for letterbox background fill (0–1, max heavy blur). */
 export const CAPCUT_BACKGROUND_BLUR = 1.0;
+
+/** CapCut background video clip alpha (~20% over black canvas for max subtitle contrast). */
+export const CAPCUT_BACKGROUND_BRIGHTNESS = 0.2;
+
+/** Web player CSS blur/darken tuning. */
+export const WEB_BACKGROUND_BLUR_CLASS = "blur-[100px]";
+export const WEB_BACKGROUND_BRIGHTNESS_CLASS = "brightness-[0.18]";
+export const WEB_BACKGROUND_OVERLAY_CLASS = "bg-black/75";
 
 /** True when source footage is not native 9:16 vertical (horizontal, square, or other portrait). */
 export function isNonVerticalCanvasVideo(width: number, height: number): boolean {

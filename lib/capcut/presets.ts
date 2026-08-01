@@ -63,12 +63,12 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     activeColor: "#FFE500",
     keywordAccentColor: "#FF1493",
     borderColor: "#000000",
-    borderWidth: 0.06,
+    borderWidth: 0.085,
     borderWidthActive: 0.09,
     shadowColor: "#000000",
-    shadowAlpha: 0.85,
-    shadowDistance: 6,
-    shadowDistanceActive: 8,
+    shadowAlpha: 0.8,
+    shadowDistance: 2,
+    shadowDistanceActive: 2,
     fontSize: 4.0,
     textScale: 0.18,
     activeWordScale: 1.1,
@@ -98,12 +98,12 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     activeColor: "#39FF14",
     keywordAccentColor: "#FF007F",
     borderColor: "#000000",
-    borderWidth: 0.05,
-    borderWidthActive: 0.08,
-    shadowColor: "#022C22",
-    shadowAlpha: 0.9,
-    shadowDistance: 5,
-    shadowDistanceActive: 7,
+    borderWidth: 0.085,
+    borderWidthActive: 0.09,
+    shadowColor: "#000000",
+    shadowAlpha: 0.8,
+    shadowDistance: 2,
+    shadowDistanceActive: 2,
     fontSize: 4.0,
     textScale: 0.18,
     activeWordScale: 1.1,
@@ -132,13 +132,13 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     inactiveColor: "#F8FAFC",
     activeColor: "#FFFFFF",
     keywordAccentColor: "#F472B6",
-    borderColor: "#0F172A",
-    borderWidth: 0.035,
-    borderWidthActive: 0.05,
+    borderColor: "#000000",
+    borderWidth: 0.085,
+    borderWidthActive: 0.09,
     shadowColor: "#000000",
-    shadowAlpha: 0.75,
-    shadowDistance: 4,
-    shadowDistanceActive: 6,
+    shadowAlpha: 0.8,
+    shadowDistance: 2,
+    shadowDistanceActive: 2,
     fontSize: 3.5,
     textScale: 0.16,
     activeWordScale: 1.08,
@@ -163,6 +163,25 @@ export function getSubtitlePreset(theme: ThemeId): SubtitleStylePreset {
   return SUBTITLE_STYLE_PRESETS[theme];
 }
 
+/** Shared stroke/shadow tuning for crisp subtitles on bright backgrounds. */
+export const SUBTITLE_READABILITY = {
+  strokeColor: "#000000",
+  /** CapCut material border_width (~3–4px at export scale). */
+  capcutBorderWidth: 0.085,
+  capcutBorderAlpha: 1,
+  capcutShadowColor: "#000000",
+  capcutShadowAlpha: 0.8,
+  /** CapCut shadow angle (90° ≈ downward offset). */
+  capcutShadowAngle: 90,
+  capcutShadowDistance: 2,
+  /** CapCut shadow_smoothing (~4–6px blur). */
+  capcutShadowSmoothing: 0.55,
+  webStrokeWidthPx: 3.5,
+  webShadowOffsetY: 2,
+  webShadowBlurPx: 5,
+  webFontWeight: 800,
+} as const;
+
 export function hexToRgb(hex: string): RgbColor {
   const normalized = hex.replace("#", "").slice(0, 6);
   return [
@@ -179,15 +198,38 @@ export interface PhraseWord {
   isHighlight: boolean;
 }
 
+function buildCapCutRichTextStroke(): Record<string, unknown> {
+  return {
+    alpha: SUBTITLE_READABILITY.capcutBorderAlpha,
+    width: SUBTITLE_READABILITY.capcutBorderWidth,
+    content: {
+      render_type: "solid",
+      solid: { alpha: 1, color: hexToRgb(SUBTITLE_READABILITY.strokeColor) },
+    },
+  };
+}
+
+function buildCapCutRichTextShadow(): Record<string, unknown> {
+  return {
+    alpha: SUBTITLE_READABILITY.capcutShadowAlpha,
+    angle: SUBTITLE_READABILITY.capcutShadowAngle,
+    distance: SUBTITLE_READABILITY.capcutShadowDistance,
+    smoothing: SUBTITLE_READABILITY.capcutShadowSmoothing,
+    content: {
+      render_type: "solid",
+      solid: { alpha: 1, color: hexToRgb(SUBTITLE_READABILITY.capcutShadowColor) },
+    },
+  };
+}
+
 function buildTextStyleRange(
   rangeStart: number,
   rangeEnd: number,
   color: RgbColor,
-  bold: boolean,
 ): Record<string, unknown> {
   return {
     range: [rangeStart, rangeEnd],
-    bold,
+    bold: true,
     italic: false,
     underline: false,
     fill: {
@@ -197,6 +239,8 @@ function buildTextStyleRange(
         solid: { alpha: 1, color },
       },
     },
+    strokes: [buildCapCutRichTextStroke()],
+    shadows: [buildCapCutRichTextShadow()],
   };
 }
 
@@ -294,7 +338,7 @@ export function buildCapCutPhraseTextContent(
   }
 
   const styles: Array<Record<string, unknown>> = [
-    buildTextStyleRange(0, textLength, hexToRgb(preset.inactiveColor), false),
+    buildTextStyleRange(0, textLength, hexToRgb(preset.inactiveColor)),
   ];
 
   if (activeEntry && activeStart >= 0 && activeEnd > activeStart && activeEnd <= textLength) {
@@ -303,7 +347,6 @@ export function buildCapCutPhraseTextContent(
         activeStart,
         activeEnd,
         hexToRgb(resolveActiveWordColor(activeEntry, preset)),
-        true,
       ),
     );
   }
@@ -376,7 +419,6 @@ export function getCapCutTextMaterialProps(
 ): StyleDraftRecord {
   const activeEntry = phraseWords.find((entry) => entry.isActive);
   const hasActiveWord = activeEntry !== undefined;
-  const isKeywordActive = activeEntry?.isHighlight === true;
   const activeColor = activeEntry ? resolveActiveWordColor(activeEntry, preset) : preset.inactiveColor;
 
   return {
@@ -397,16 +439,15 @@ export function getCapCutTextMaterialProps(
     fixed_width: -1,
     fixed_height: -1,
     text_alpha: 1,
-    border_color: preset.borderColor,
-    border_width: hasActiveWord && isKeywordActive ? preset.borderWidthActive : preset.borderWidth,
-    border_alpha: 1,
+    border_color: SUBTITLE_READABILITY.strokeColor,
+    border_width: SUBTITLE_READABILITY.capcutBorderWidth,
+    border_alpha: SUBTITLE_READABILITY.capcutBorderAlpha,
     has_shadow: true,
-    shadow_alpha: preset.shadowAlpha,
-    shadow_angle: -45,
-    shadow_color: preset.shadowColor,
-    shadow_distance:
-      hasActiveWord && isKeywordActive ? preset.shadowDistanceActive : preset.shadowDistance,
-    shadow_smoothing: 1,
+    shadow_alpha: SUBTITLE_READABILITY.capcutShadowAlpha,
+    shadow_angle: SUBTITLE_READABILITY.capcutShadowAngle,
+    shadow_color: SUBTITLE_READABILITY.capcutShadowColor,
+    shadow_distance: SUBTITLE_READABILITY.capcutShadowDistance,
+    shadow_smoothing: SUBTITLE_READABILITY.capcutShadowSmoothing,
     background_color: "#000000",
     background_alpha: 0,
     background_style: 0,
@@ -438,7 +479,7 @@ export function getWebSubtitleWordStyle(
 } {
   return {
     fontFamily: preset.fontFamily,
-    fontWeight: isActive ? 800 : 700,
+    fontWeight: SUBTITLE_READABILITY.webFontWeight,
     textTransform: preset.uppercase ? "uppercase" : "none",
     color: isActive
       ? isHighlight
@@ -446,9 +487,9 @@ export function getWebSubtitleWordStyle(
         : preset.activeColor
       : preset.inactiveColor,
     opacity: isActive ? 1 : preset.inactiveOpacity,
-    WebkitTextStroke: `${isActive ? 2 : 1.5}px ${preset.borderColor}`,
+    WebkitTextStroke: `${SUBTITLE_READABILITY.webStrokeWidthPx}px ${SUBTITLE_READABILITY.strokeColor}`,
     paintOrder: "stroke fill",
-    textShadow: `0 ${isActive ? 3 : 2}px 8px rgba(0,0,0,${preset.shadowAlpha})`,
+    textShadow: `0 ${SUBTITLE_READABILITY.webShadowOffsetY}px ${SUBTITLE_READABILITY.webShadowBlurPx}px rgba(0,0,0,${SUBTITLE_READABILITY.capcutShadowAlpha})`,
     letterSpacing: `${preset.letterSpacing}em`,
   };
 }

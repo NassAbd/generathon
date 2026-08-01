@@ -11,6 +11,7 @@ import {
 } from "@/lib/capcut/presets";
 import {
   CAPCUT_BACKGROUND_BLUR,
+  CAPCUT_BACKGROUND_BRIGHTNESS,
   CAPCUT_CANVAS_HEIGHT,
   CAPCUT_CANVAS_RATIO,
   CAPCUT_CANVAS_WIDTH,
@@ -889,6 +890,7 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       on: true,
       value: backgroundCoverScale,
     };
+    backgroundClip.alpha = CAPCUT_BACKGROUND_BRIGHTNESS;
     (backgroundVideoTrack.segments as DraftRecord[]).push(backgroundSegment);
   }
 
