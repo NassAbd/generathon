@@ -6,6 +6,8 @@ import {
   CAPCUT_EXPORT_AUDIO,
   getCapCutTextMaterialProps,
   getSubtitlePreset,
+  sanitizeCapCutSubtitleSegmentPlans,
+  type CapCutSubtitleSegmentPlan,
   type SubtitleStylePreset,
 } from "@/lib/capcut/presets";
 import {
@@ -253,6 +255,67 @@ function applyTextSegmentLayout(textSegment: DraftRecord, preset: SubtitleStyleP
   textClip.transform = { x: 0.0, y: preset.subtitleY };
   textClip.rotation = 0.0;
   textSegment.uniform_scale = { on: true, value: preset.textScale };
+}
+
+/**
+ * Places every subtitle on ONE text track with non-overlapping timeranges.
+ * Shared track_render_index / track_attribute prevent CapCut from auto-stacking.
+ */
+function appendSubtitleSegmentsToSingleTrack(
+  textTrack: DraftRecord,
+  materials: DraftRecord,
+  plans: CapCutSubtitleSegmentPlan[],
+  preset: SubtitleStylePreset,
+): void {
+  const trackId = String(textTrack.id);
+  textTrack.type = "text";
+  textTrack.attribute = 0;
+  textTrack.flag = 0;
+  textTrack.segments = [];
+
+  const TEXT_TRACK_RENDER_INDEX = 0;
+  const TEXT_SEGMENT_RENDER_INDEX = 15000;
+
+  for (let index = 0; index < plans.length; index += 1) {
+    const plan = plans[index];
+    const startMicros = plan.startMicros;
+    let durationMicros = plan.durationMicros;
+
+    if (index + 1 < plans.length) {
+      const nextStart = plans[index + 1].startMicros;
+      if (startMicros + durationMicros > nextStart) {
+        durationMicros = Math.max(0, nextStart - startMicros);
+      }
+    }
+
+    if (durationMicros <= 0) {
+      continue;
+    }
+
+    const textMaterialId = uuid();
+    pushMaterial(materials, "texts", {
+      id: textMaterialId,
+      ...getCapCutTextMaterialProps(plan.phraseWords, preset),
+    });
+
+    const textCompanions = createCompanionMaterials("text");
+    registerCompanions(materials, textCompanions);
+    const textSegment = baseSegment(
+      uuid(),
+      textMaterialId,
+      trackId,
+      { start: startMicros, duration: durationMicros },
+      textCompanions.ids,
+      TEXT_SEGMENT_RENDER_INDEX,
+    );
+    textSegment.target_timerange = { start: startMicros, duration: durationMicros };
+    textSegment.source_timerange = { start: 0, duration: durationMicros };
+    textSegment.track_render_index = TEXT_TRACK_RENDER_INDEX;
+    textSegment.track_attribute = 0;
+    textSegment.raw_segment_id = trackId;
+    applyTextSegmentLayout(textSegment, preset);
+    (textTrack.segments as DraftRecord[]).push(textSegment);
+  }
 }
 
 function logTextSegmentScaleSample(draft: CapCutDraftContent): void {
@@ -996,39 +1059,16 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
   );
 
   const subtitlePreset = getSubtitlePreset(input.theme);
-  const subtitleSegmentPlans = buildCapCutSubtitleSegmentPlans(
-    input.transcript,
-    subtitlePreset,
-    toMicroseconds,
+  const subtitleSegmentPlans = sanitizeCapCutSubtitleSegmentPlans(
+    buildCapCutSubtitleSegmentPlans(input.transcript, subtitlePreset, toMicroseconds),
   );
 
-  for (const plan of subtitleSegmentPlans) {
-    const entry = input.transcript[plan.wordIndex];
-    const startMicros = plan.startMicros;
-    const duration = plan.durationMicros;
-
-    const textMaterialId = uuid();
-
-    pushMaterial(materials, "texts", {
-      id: textMaterialId,
-      ...getCapCutTextMaterialProps(plan.phraseWords, subtitlePreset),
-    });
-
-    const textCompanions = createCompanionMaterials("text");
-    registerCompanions(materials, textCompanions);
-    const textSegment = baseSegment(
-      uuid(),
-      textMaterialId,
-      String(textTrack.id),
-      { start: startMicros, duration },
-      textCompanions.ids,
-      15000,
-    );
-    textSegment.target_timerange = { start: startMicros, duration };
-    textSegment.source_timerange = { start: 0, duration };
-    applyTextSegmentLayout(textSegment, subtitlePreset);
-    (textTrack.segments as DraftRecord[]).push(textSegment);
-  }
+  appendSubtitleSegmentsToSingleTrack(
+    textTrack,
+    materials,
+    subtitleSegmentPlans,
+    subtitlePreset,
+  );
 
   // SFX track intentionally left empty — export focuses on framing + subtitles.
 

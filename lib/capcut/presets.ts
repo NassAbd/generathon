@@ -369,6 +369,76 @@ export interface CapCutSubtitleSegmentPlan {
   phraseWords: PhraseWord[];
 }
 
+/**
+ * Sorts subtitle plans chronologically and clamps each segment so
+ * `end[i] <= start[i+1]` with zero micro-overlap (CapCut-safe single track).
+ */
+export function sanitizeCapCutSubtitleSegmentPlans(
+  plans: CapCutSubtitleSegmentPlan[],
+): CapCutSubtitleSegmentPlan[] {
+  if (plans.length === 0) {
+    return [];
+  }
+
+  const sorted = [...plans].sort((left, right) => {
+    if (left.startMicros !== right.startMicros) {
+      return left.startMicros - right.startMicros;
+    }
+    return left.wordIndex - right.wordIndex;
+  });
+
+  const sanitized: CapCutSubtitleSegmentPlan[] = [];
+
+  for (let index = 0; index < sorted.length; index += 1) {
+    const plan = sorted[index];
+    let startMicros = Math.max(0, plan.startMicros);
+
+    if (sanitized.length > 0) {
+      const previous = sanitized[sanitized.length - 1];
+      const previousEnd = previous.startMicros + previous.durationMicros;
+      if (startMicros < previousEnd) {
+        startMicros = previousEnd;
+      }
+    }
+
+    const nextStartMicros =
+      index + 1 < sorted.length ? sorted[index + 1].startMicros : Number.POSITIVE_INFINITY;
+
+    let endMicros = Math.min(plan.startMicros + plan.durationMicros, nextStartMicros);
+
+    if (endMicros <= startMicros) {
+      if (!Number.isFinite(nextStartMicros) || nextStartMicros <= startMicros) {
+        continue;
+      }
+      endMicros = Math.min(startMicros + MIN_SUBTITLE_SEGMENT_MICROS, nextStartMicros);
+    }
+
+    if (endMicros <= startMicros) {
+      continue;
+    }
+
+    sanitized.push({
+      ...plan,
+      startMicros,
+      durationMicros: endMicros - startMicros,
+      phraseWords: plan.phraseWords,
+    });
+  }
+
+  // Final pass: hard-clamp any residual overlap from equal/unsorted starts.
+  for (let index = 0; index < sanitized.length - 1; index += 1) {
+    const current = sanitized[index];
+    const next = sanitized[index + 1];
+    const currentEnd = current.startMicros + current.durationMicros;
+
+    if (currentEnd > next.startMicros) {
+      current.durationMicros = Math.max(0, next.startMicros - current.startMicros);
+    }
+  }
+
+  return sanitized.filter((plan) => plan.durationMicros > 0);
+}
+
 /** Builds strictly non-overlapping subtitle segment timings aligned to transcript word starts. */
 export function buildCapCutSubtitleSegmentPlans(
   transcript: TranscriptData,
@@ -379,32 +449,52 @@ export function buildCapCutSubtitleSegmentPlans(
     return [];
   }
 
+  const chronological = transcript
+    .map((entry, wordIndex) => ({ entry, wordIndex }))
+    .sort((left, right) => {
+      if (left.entry.start !== right.entry.start) {
+        return left.entry.start - right.entry.start;
+      }
+      return left.wordIndex - right.wordIndex;
+    });
+
   const plans: CapCutSubtitleSegmentPlan[] = [];
 
-  for (let index = 0; index < transcript.length; index += 1) {
-    const entry = transcript[index];
+  for (let index = 0; index < chronological.length; index += 1) {
+    const { entry, wordIndex } = chronological[index];
     const startMicros = toMicroseconds(entry.start);
     const wordEndMicros = toMicroseconds(entry.end);
 
     let endMicros = wordEndMicros;
-    if (index < transcript.length - 1) {
-      const nextStartMicros = toMicroseconds(transcript[index + 1].start);
+    if (index < chronological.length - 1) {
+      const nextStartMicros = toMicroseconds(chronological[index + 1].entry.start);
       endMicros = Math.min(endMicros, nextStartMicros);
     }
 
     if (endMicros <= startMicros) {
-      endMicros = startMicros + MIN_SUBTITLE_SEGMENT_MICROS;
+      const nextStartMicros =
+        index < chronological.length - 1
+          ? toMicroseconds(chronological[index + 1].entry.start)
+          : startMicros + MIN_SUBTITLE_SEGMENT_MICROS;
+      if (nextStartMicros <= startMicros) {
+        continue;
+      }
+      endMicros = Math.min(startMicros + MIN_SUBTITLE_SEGMENT_MICROS, nextStartMicros);
+    }
+
+    if (endMicros <= startMicros) {
+      continue;
     }
 
     plans.push({
-      wordIndex: index,
+      wordIndex,
       startMicros,
       durationMicros: endMicros - startMicros,
-      phraseWords: getPhraseWordsForIndex(transcript, index, preset),
+      phraseWords: getPhraseWordsForIndex(transcript, wordIndex, preset),
     });
   }
 
-  return plans;
+  return sanitizeCapCutSubtitleSegmentPlans(plans);
 }
 
 export type StyleDraftRecord = Record<string, unknown>;
