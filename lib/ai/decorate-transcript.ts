@@ -1,4 +1,9 @@
 import {
+  buildHeuristicDecorations,
+  buildKeywordFilterPromptRules,
+  refineKeywordDecorations,
+} from "@/lib/ai/keyword-filter";
+import {
   ASSET_FILES,
   buildAssetCatalogPrompt,
   getAssetUrl,
@@ -23,16 +28,16 @@ function getGeminiApiKey(): string | null {
 }
 
 function getHighlightTargetCount(wordCount: number): { min: number; max: number } {
-  const min = Math.max(1, Math.floor(wordCount * 0.2));
-  const max = Math.max(min, Math.ceil(wordCount * 0.3));
+  const max = Math.max(1, Math.ceil(wordCount / 5));
+  const min = Math.max(1, Math.min(max, Math.floor(wordCount / 8)));
   return { min, max };
 }
 
 function buildSystemPrompt(minHighlights: number, maxHighlights: number): string {
   return [
     "You are a kinetic typography director for short-form social video.",
-    `Select ${minHighlights}-${maxHighlights} punchy keywords (~20-30% of words) that deserve visual emphasis.`,
-    "Prioritize emotional, action, or hook words — not filler or stop words.",
+    `Select ${minHighlights}-${maxHighlights} high-impact keywords only — roughly 1 per 4-5 words, never filler.`,
+    buildKeywordFilterPromptRules(),
     "For each selected word, assign:",
     "- effect: one of bounce, shake, glow",
     `- asset: MUST be exactly one of: ${ASSET_FILES.join(", ")}`,
@@ -133,21 +138,12 @@ function mergeTranscript(words: WhisperWord[], decorations: LlmDecoration[]): Tr
 }
 
 function fallbackDecorations(words: WhisperWord[]): LlmDecoration[] {
-  const candidates = words
-    .map((entry, index) => ({ index, length: entry.word.length }))
-    .filter((entry) => entry.length >= 4)
-    .sort((a, b) => b.length - a.length);
+  return buildHeuristicDecorations(words);
+}
 
-  const { min, max } = getHighlightTargetCount(words.length);
-  const targetCount = Math.min(candidates.length, Math.max(min, Math.min(max, Math.ceil(words.length * 0.25))));
-  const effects: WordEffect[] = ["bounce", "shake", "glow"];
-
-  return candidates.slice(0, targetCount).map((entry, decorationIndex) => ({
-    index: entry.index,
-    effect: effects[decorationIndex % effects.length],
-    asset: ASSET_FILES[decorationIndex % ASSET_FILES.length],
-    sfx: SFX_FILES[decorationIndex % SFX_FILES.length],
-  }));
+function finalizeDecorations(decorations: LlmDecoration[], words: WhisperWord[]): LlmDecoration[] {
+  const validated = validateDecorations(decorations, words.length);
+  return refineKeywordDecorations(validated, words);
 }
 
 async function decorateWithOpenAi(words: WhisperWord[]): Promise<LlmDecoration[]> {
@@ -188,7 +184,7 @@ async function decorateWithOpenAi(words: WhisperWord[]): Promise<LlmDecoration[]
   }
 
   const parsed = parseLlmJson(content);
-  return validateDecorations(parsed.decorations, words.length);
+  return finalizeDecorations(parsed.decorations, words);
 }
 
 async function decorateWithGemini(words: WhisperWord[]): Promise<LlmDecoration[]> {
@@ -232,7 +228,7 @@ async function decorateWithGemini(words: WhisperWord[]): Promise<LlmDecoration[]
   }
 
   const parsed = parseLlmJson(content);
-  return validateDecorations(parsed.decorations, words.length);
+  return finalizeDecorations(parsed.decorations, words);
 }
 
 export async function decorateTranscript(words: WhisperWord[]): Promise<TranscriptData> {

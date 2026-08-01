@@ -96,7 +96,7 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     fontCategoryCapCut: "en",
     inactiveColor: "#E0F2FE",
     activeColor: "#39FF14",
-    keywordAccentColor: "#39FF14",
+    keywordAccentColor: "#FF007F",
     borderColor: "#000000",
     borderWidth: 0.05,
     borderWidthActive: 0.08,
