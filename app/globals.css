@@ -6,34 +6,6 @@
 
 * { box-sizing: border-box; }
 
-@keyframes bounce-word {
-  0%, 100% { transform: translateY(0) scale(1.08); }
-  50% { transform: translateY(-8px) scale(1.16); }
-}
-
-@keyframes shake-word {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-4px); }
-  75% { transform: translateX(4px); }
-}
-
-@keyframes glow-word {
-  0%, 100% { text-shadow: 0 0 8px rgba(250, 204, 21, 0.45); }
-  50% { text-shadow: 0 0 18px rgba(250, 204, 21, 0.95), 0 0 28px rgba(168, 85, 247, 0.45); }
-}
-
-@keyframes glitch {
-  0%, 100% { transform: translate(0); text-shadow: 0 0 10px rgba(34, 211, 238, 0.8); }
-  20% { transform: translate(-2px, 1px); text-shadow: -2px 0 rgba(236, 72, 153, 0.8); }
-  40% { transform: translate(2px, -1px); text-shadow: 2px 0 rgba(34, 211, 238, 0.8); }
-  60% { transform: translate(-1px, 0); }
-}
-
-.animate-bounce-word { animation: bounce-word 0.55s ease-in-out; }
-.animate-shake-word { animation: shake-word 0.35s ease-in-out; }
-.animate-glow-word { animation: glow-word 0.8s ease-in-out; }
-.animate-glitch { animation: glitch 0.45s steps(2, end); }
-
 body {
   margin: 0;
   min-height: 100vh;

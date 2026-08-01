@@ -1,7 +1,5 @@
-import type { TranscriptData, WordEffect } from "@/types/transcript";
+import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
-
-type DraftRecord = Record<string, unknown>;
 
 export type RgbColor = [number, number, number];
 
@@ -14,6 +12,8 @@ export interface SubtitleStylePreset {
   fontCategoryCapCut: string;
   inactiveColor: string;
   activeColor: string;
+  /** Rich-text accent for highlighted keywords when they are the active word. */
+  keywordAccentColor: string;
   borderColor: string;
   borderWidth: number;
   borderWidthActive: number;
@@ -61,6 +61,7 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     fontCategoryCapCut: "en",
     inactiveColor: "#FFFFFF",
     activeColor: "#FFE500",
+    keywordAccentColor: "#FF1493",
     borderColor: "#000000",
     borderWidth: 0.06,
     borderWidthActive: 0.09,
@@ -95,6 +96,7 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     fontCategoryCapCut: "en",
     inactiveColor: "#E0F2FE",
     activeColor: "#39FF14",
+    keywordAccentColor: "#39FF14",
     borderColor: "#000000",
     borderWidth: 0.05,
     borderWidthActive: 0.08,
@@ -129,6 +131,7 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     fontCategoryCapCut: "en",
     inactiveColor: "#F8FAFC",
     activeColor: "#FFFFFF",
+    keywordAccentColor: "#F472B6",
     borderColor: "#0F172A",
     borderWidth: 0.035,
     borderWidthActive: 0.05,
@@ -173,6 +176,7 @@ export interface PhraseWord {
   index: number;
   word: string;
   isActive: boolean;
+  isHighlight: boolean;
 }
 
 function buildTextStyleRange(
@@ -220,10 +224,12 @@ export function getFixedPhraseBlock(
   const phraseWords: PhraseWord[] = [];
 
   for (let index = chunkStart; index <= chunkEnd; index += 1) {
+    const entry = transcript[index];
     phraseWords.push({
       index,
-      word: transcript[index].word,
+      word: entry.word,
       isActive: index === activeIndex,
+      isHighlight: entry.highlight === true,
     });
   }
 
@@ -247,6 +253,13 @@ export function buildPhraseDisplayText(phraseWords: PhraseWord[], preset: Subtit
   return phraseWords.map((entry) => formatPhraseDisplayWord(entry.word, preset)).join(" ");
 }
 
+function resolveActiveWordColor(entry: PhraseWord, preset: SubtitleStylePreset): string {
+  if (entry.isHighlight) {
+    return preset.keywordAccentColor;
+  }
+  return preset.activeColor;
+}
+
 export function buildCapCutPhraseTextContent(
   phraseWords: PhraseWord[],
   preset: SubtitleStylePreset,
@@ -263,7 +276,6 @@ export function buildCapCutPhraseTextContent(
   let activeEnd = -1;
 
   if (activeEntry) {
-    const activeWord = activeEntry.display;
     let charOffset = 0;
 
     for (let index = 0; index < displayWords.length; index += 1) {
@@ -279,21 +291,21 @@ export function buildCapCutPhraseTextContent(
         charOffset += 1;
       }
     }
-
-    if (activeStart < 0) {
-      activeStart = fullText.indexOf(activeWord);
-      if (activeStart >= 0) {
-        activeEnd = activeStart + activeWord.length;
-      }
-    }
   }
 
   const styles: Array<Record<string, unknown>> = [
     buildTextStyleRange(0, textLength, hexToRgb(preset.inactiveColor), false),
   ];
 
-  if (activeStart >= 0 && activeEnd > activeStart && activeEnd <= textLength) {
-    styles.push(buildTextStyleRange(activeStart, activeEnd, hexToRgb(preset.activeColor), true));
+  if (activeEntry && activeStart >= 0 && activeEnd > activeStart && activeEnd <= textLength) {
+    styles.push(
+      buildTextStyleRange(
+        activeStart,
+        activeEnd,
+        hexToRgb(resolveActiveWordColor(activeEntry, preset)),
+        true,
+      ),
+    );
   }
 
   return JSON.stringify({
@@ -362,7 +374,10 @@ export function getCapCutTextMaterialProps(
   phraseWords: PhraseWord[],
   preset: SubtitleStylePreset,
 ): StyleDraftRecord {
-  const hasActiveWord = phraseWords.some((entry) => entry.isActive);
+  const activeEntry = phraseWords.find((entry) => entry.isActive);
+  const hasActiveWord = activeEntry !== undefined;
+  const isKeywordActive = activeEntry?.isHighlight === true;
+  const activeColor = activeEntry ? resolveActiveWordColor(activeEntry, preset) : preset.inactiveColor;
 
   return {
     type: "text",
@@ -371,7 +386,7 @@ export function getCapCutTextMaterialProps(
     font_size: preset.fontSize,
     font_name: preset.fontNameCapCut,
     font_category: preset.fontCategoryCapCut,
-    text_color: hasActiveWord ? preset.activeColor : preset.inactiveColor,
+    text_color: hasActiveWord ? activeColor : preset.inactiveColor,
     typesetting: 0,
     letter_spacing: preset.letterSpacing,
     line_spacing: 0.02,
@@ -383,13 +398,14 @@ export function getCapCutTextMaterialProps(
     fixed_height: -1,
     text_alpha: 1,
     border_color: preset.borderColor,
-    border_width: preset.borderWidth,
+    border_width: hasActiveWord && isKeywordActive ? preset.borderWidthActive : preset.borderWidth,
     border_alpha: 1,
     has_shadow: true,
     shadow_alpha: preset.shadowAlpha,
     shadow_angle: -45,
     shadow_color: preset.shadowColor,
-    shadow_distance: preset.shadowDistance,
+    shadow_distance:
+      hasActiveWord && isKeywordActive ? preset.shadowDistanceActive : preset.shadowDistance,
     shadow_smoothing: 1,
     background_color: "#000000",
     background_alpha: 0,
@@ -405,289 +421,10 @@ export function getCapCutTextMaterialProps(
   };
 }
 
-export interface CapCutTextAnimCatalogEntry {
-  slug: string;
-  title: string;
-  effect_id: string;
-  resource_id: string;
-  md5: string;
-  default_duration_us: number;
-}
-
-/** CapCut text intro / loop animation catalogue entries (capcut-cli enums). */
-export const CAPCUT_TEXT_ANIM_CATALOG: Record<string, CapCutTextAnimCatalogEntry> = {
-  "bounce-in": {
-    slug: "bounce-in",
-    title: "Bounce In",
-    effect_id: "6887766069587481090",
-    resource_id: "6887766069587481090",
-    md5: "83cd5b21c6a1cea2d11aac09bf328d1b",
-    default_duration_us: 500_000,
-  },
-  "pop-up": {
-    slug: "pop-up",
-    title: "Pop Up",
-    effect_id: "7145435451946439170",
-    resource_id: "7145435451946439170",
-    md5: "28d9145ead32c23742082a37e511370e",
-    default_duration_us: 500_000,
-  },
-  wobble: {
-    slug: "wobble",
-    title: "Wobble",
-    effect_id: "7095603439912096258",
-    resource_id: "7095603439912096258",
-    md5: "d9099a94194f6a60366a2115ecca7646",
-    default_duration_us: 500_000,
-  },
-  glitch: {
-    slug: "glitch",
-    title: "Glitch",
-    effect_id: "7077812383946641921",
-    resource_id: "7077812383946641921",
-    md5: "de64c5a073e2517b8d5a07244034fc62",
-    default_duration_us: 500_000,
-  },
-  blur: {
-    slug: "blur",
-    title: "Blur",
-    effect_id: "6923135604519604737",
-    resource_id: "6923135604519604737",
-    md5: "a5f4d3998c0648ec65c03251506bd0a0",
-    default_duration_us: 500_000,
-  },
-  pulse: {
-    slug: "pulse",
-    title: "Pulse",
-    effect_id: "6724919955654971918",
-    resource_id: "6724919955654971918",
-    md5: "1b9a454256f041c19f723ba27358740b",
-    default_duration_us: 500_000,
-  },
-};
-
-export interface CapCutTextAnimationMaterialPlan {
-  material: DraftRecord;
-  materialId: string;
-}
-
-export interface CapCutWordEffectExportPlan {
-  keyframes: DraftRecord[];
-  introAnimation?: CapCutTextAnimationMaterialPlan;
-  loopAnimation?: CapCutTextAnimationMaterialPlan;
-}
-
-function createCapCutKeyframePoint(timeOffsetMicros: number, values: number[]): DraftRecord {
-  return {
-    id: crypto.randomUUID(),
-    time_offset: timeOffsetMicros,
-    values,
-    curveType: "Line",
-  };
-}
-
-function createCapCutKeyframeTrack(propertyType: string, points: DraftRecord[]): DraftRecord {
-  return {
-    id: crypto.randomUUID(),
-    property_type: propertyType,
-    keyframe_list: points,
-  };
-}
-
-function clampEffectDuration(requestedMicros: number, segmentDurationMicros: number): number {
-  return Math.max(80_000, Math.min(requestedMicros, segmentDurationMicros));
-}
-
-/** Pop/bounce scale keyframes — punchy 0.6× → 1.4× → 1.0× textScale pop. */
-export function buildPopBounceScaleKeyframes(textScale: number): DraftRecord[] {
-  const settleScale = Number((textScale * 1.0).toFixed(4));
-  const startScale = Number((textScale * 0.6).toFixed(4));
-  const peakScale = Number((textScale * 1.4).toFixed(4));
-
-  return [
-    createCapCutKeyframeTrack("KFTypeUniformScale", [
-      createCapCutKeyframePoint(0, [startScale]),
-      createCapCutKeyframePoint(100_000, [peakScale]),
-      createCapCutKeyframePoint(200_000, [settleScale]),
-    ]),
-  ];
-}
-
-/** Horizontal shake keyframes — ±0.05 normalized canvas units for visible motion. */
-export function buildShakePositionKeyframes(
-  segmentDurationMicros: number,
-  amplitude = 0.05,
-): DraftRecord[] {
-  const shakeDuration = clampEffectDuration(350_000, segmentDurationMicros);
-  const quarter = Math.round(shakeDuration / 4);
-  const half = Math.round(shakeDuration / 2);
-  const threeQuarter = Math.round((shakeDuration * 3) / 4);
-
-  return [
-    createCapCutKeyframeTrack("KFTypePositionX", [
-      createCapCutKeyframePoint(0, [0]),
-      createCapCutKeyframePoint(quarter, [-amplitude]),
-      createCapCutKeyframePoint(half, [amplitude]),
-      createCapCutKeyframePoint(threeQuarter, [-amplitude]),
-      createCapCutKeyframePoint(shakeDuration, [0]),
-    ]),
-  ];
-}
-
-/** Glow double-pulse scale keyframes — 1.0× → 1.25× → 1.0× → 1.25× → 1.0×. */
-export function buildGlowScaleKeyframes(textScale: number, segmentDurationMicros: number): DraftRecord[] {
-  const pulseDuration = clampEffectDuration(800_000, segmentDurationMicros);
-  const quarter = Math.round(pulseDuration / 4);
-  const half = Math.round(pulseDuration / 2);
-  const threeQuarter = Math.round((pulseDuration * 3) / 4);
-  const baseScale = Number(textScale.toFixed(4));
-  const peakScale = Number((textScale * 1.25).toFixed(4));
-
-  const tracks: DraftRecord[] = [
-    createCapCutKeyframeTrack("KFTypeUniformScale", [
-      createCapCutKeyframePoint(0, [baseScale]),
-      createCapCutKeyframePoint(quarter, [peakScale]),
-      createCapCutKeyframePoint(half, [baseScale]),
-      createCapCutKeyframePoint(threeQuarter, [peakScale]),
-      createCapCutKeyframePoint(pulseDuration, [baseScale]),
-    ]),
-  ];
-
-  if (pulseDuration >= 200_000) {
-    tracks.push(
-      createCapCutKeyframeTrack("KFTypePositionX", [
-        createCapCutKeyframePoint(0, [0]),
-        createCapCutKeyframePoint(Math.round(pulseDuration * 0.2), [-0.02]),
-        createCapCutKeyframePoint(Math.round(pulseDuration * 0.4), [0.02]),
-        createCapCutKeyframePoint(Math.round(pulseDuration * 0.6), [-0.015]),
-        createCapCutKeyframePoint(pulseDuration, [0]),
-      ]),
-    );
-  }
-
-  return tracks;
-}
-
-export function buildCapCutTextEffectKeyframes(
-  effect: WordEffect,
-  textScale: number,
-  segmentDurationMicros: number,
-  theme: ThemeId,
-): DraftRecord[] {
-  switch (effect) {
-    case "bounce":
-      return buildPopBounceScaleKeyframes(textScale);
-    case "shake":
-      return buildShakePositionKeyframes(segmentDurationMicros);
-    case "glow":
-      return theme === "cyberpunk"
-        ? [
-            ...buildGlowScaleKeyframes(textScale, segmentDurationMicros),
-            ...buildShakePositionKeyframes(Math.min(segmentDurationMicros, 450_000), 0.05),
-          ]
-        : buildGlowScaleKeyframes(textScale, segmentDurationMicros);
-    default:
-      return [];
-  }
-}
-
-export function createCapCutTextAnimationMaterial(
-  catalogEntry: CapCutTextAnimCatalogEntry,
-  options: {
-    animType: "in" | "group";
-    durationMicros: number;
-    startMicros?: number;
-    materialId?: string;
-  },
-): CapCutTextAnimationMaterialPlan {
-  const materialId = options.materialId ?? crypto.randomUUID();
-  const categoryName = options.animType === "in" ? "ruchang" : "zuhe";
-
-  return {
-    materialId,
-    material: {
-      id: materialId,
-      type: "sticker_animation",
-      multi_language_current: "none",
-      animations: [
-        {
-          anim_adjust_params: null,
-          category_id: "",
-          category_name: categoryName,
-          duration: options.durationMicros,
-          id: catalogEntry.effect_id,
-          material_type: "text",
-          name: catalogEntry.title,
-          panel: "text",
-          path: "",
-          platform: "all",
-          request_id: "",
-          resource_id: catalogEntry.resource_id,
-          source_platform: 1,
-          start: options.startMicros ?? 0,
-          third_resource_id: catalogEntry.resource_id,
-          type: options.animType,
-        },
-      ],
-    },
-  };
-}
-
-const WORD_EFFECT_INTRO_DURATIONS: Record<WordEffect, number> = {
-  bounce: 250_000,
-  shake: 350_000,
-  glow: 300_000,
-};
-
-function resolveIntroCatalogEntry(effect: WordEffect, theme: ThemeId): CapCutTextAnimCatalogEntry {
-  switch (effect) {
-    case "bounce":
-      return CAPCUT_TEXT_ANIM_CATALOG["bounce-in"];
-    case "shake":
-      return CAPCUT_TEXT_ANIM_CATALOG.wobble;
-    case "glow":
-      return theme === "cyberpunk"
-        ? CAPCUT_TEXT_ANIM_CATALOG.glitch
-        : CAPCUT_TEXT_ANIM_CATALOG.blur;
-    default:
-      return CAPCUT_TEXT_ANIM_CATALOG["pop-up"];
-  }
-}
-
-/** Builds native CapCut keyframes + optional sticker_animation materials for a word effect. */
-export function buildCapCutWordEffectExportPlan(
-  effect: WordEffect,
-  textScale: number,
-  segmentDurationMicros: number,
-  theme: ThemeId,
-): CapCutWordEffectExportPlan {
-  const keyframes = buildCapCutTextEffectKeyframes(effect, textScale, segmentDurationMicros, theme);
-  const introDuration = clampEffectDuration(
-    WORD_EFFECT_INTRO_DURATIONS[effect],
-    segmentDurationMicros,
-  );
-  const introAnimation = createCapCutTextAnimationMaterial(resolveIntroCatalogEntry(effect, theme), {
-    animType: "in",
-    durationMicros: introDuration,
-    startMicros: 0,
-  });
-
-  let loopAnimation: CapCutTextAnimationMaterialPlan | undefined;
-  if (effect === "glow" && segmentDurationMicros > introDuration + 100_000) {
-    const loopDuration = segmentDurationMicros - introDuration;
-    loopAnimation = createCapCutTextAnimationMaterial(CAPCUT_TEXT_ANIM_CATALOG.pulse, {
-      animType: "group",
-      durationMicros: loopDuration,
-      startMicros: introDuration,
-    });
-  }
-
-  return { keyframes, introAnimation, loopAnimation };
-}
-
 export function getWebSubtitleWordStyle(
   preset: SubtitleStylePreset,
   isActive: boolean,
+  isHighlight = false,
 ): {
   fontFamily: string;
   fontWeight: number;
@@ -703,11 +440,60 @@ export function getWebSubtitleWordStyle(
     fontFamily: preset.fontFamily,
     fontWeight: isActive ? 800 : 700,
     textTransform: preset.uppercase ? "uppercase" : "none",
-    color: isActive ? preset.activeColor : preset.inactiveColor,
+    color: isActive
+      ? isHighlight
+        ? preset.keywordAccentColor
+        : preset.activeColor
+      : preset.inactiveColor,
     opacity: isActive ? 1 : preset.inactiveOpacity,
     WebkitTextStroke: `${isActive ? 2 : 1.5}px ${preset.borderColor}`,
     paintOrder: "stroke fill",
     textShadow: `0 ${isActive ? 3 : 2}px 8px rgba(0,0,0,${preset.shadowAlpha})`,
     letterSpacing: `${preset.letterSpacing}em`,
   };
+}
+
+/** CapCut export sound design — live Supabase public URLs and mix levels. */
+export const CAPCUT_EXPORT_AUDIO = {
+  SFX_POP_URL:
+    "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/whoosh.mp3",
+  SFX_SHOCKING_URL:
+    "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/shocking.mp3",
+  SFX_FAH_URL:
+    "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/fah.mp3",
+  DEFAULT_BGM_URL:
+    "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/bgm/lofi_relax.mp3",
+  bgmVolume: 0.12,
+  sfxVolume: 0.8,
+  /** Max keyword SFX clip length on the timeline (microseconds). */
+  sfxClipDurationMicros: 500_000,
+} as const;
+
+const SFX_URL_BY_FILENAME: Record<string, string> = {
+  "whoosh.mp3": CAPCUT_EXPORT_AUDIO.SFX_POP_URL,
+  "pop.mp3": CAPCUT_EXPORT_AUDIO.SFX_POP_URL,
+  "shocking.mp3": CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL,
+  "fah.mp3": CAPCUT_EXPORT_AUDIO.SFX_FAH_URL,
+};
+
+function extractAudioFilename(urlOrFilename: string): string | null {
+  try {
+    return new URL(urlOrFilename).pathname.split("/").pop()?.toLowerCase() ?? null;
+  } catch {
+    const basename = urlOrFilename.split("/").pop()?.toLowerCase();
+    return basename && basename.length > 0 ? basename : null;
+  }
+}
+
+export function resolveKeywordSfxUrl(sfxUrl: string | undefined): string {
+  if (!sfxUrl) {
+    return CAPCUT_EXPORT_AUDIO.SFX_POP_URL;
+  }
+
+  const filename = extractAudioFilename(sfxUrl);
+  if (filename && SFX_URL_BY_FILENAME[filename]) {
+    return SFX_URL_BY_FILENAME[filename];
+  }
+
+  return sfxUrl;
 }

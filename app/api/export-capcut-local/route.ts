@@ -36,6 +36,8 @@ export async function POST(request: Request): Promise<Response> {
 
     const exportTheme = resolveExportThemeId(body.themeId, project.theme);
     const projectName = "Motion Decorator Project";
+
+    // Downloads keyword SFX + BGM into assets/audio/, then links absolute paths in draft_info.json.
     const result = await writeDirectToCapCut(project.id, {
       projectId: project.id,
       projectName,

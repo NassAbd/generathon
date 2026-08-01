@@ -1,19 +1,18 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { normalizeAssetUrl } from "@/lib/assets/catalog";
 import {
   buildCapCutSubtitleSegmentPlans,
-  buildCapCutWordEffectExportPlan,
+  CAPCUT_EXPORT_AUDIO,
   getCapCutTextMaterialProps,
   getSubtitlePreset,
+  resolveKeywordSfxUrl,
   type SubtitleStylePreset,
 } from "@/lib/capcut/presets";
-import type { TranscriptData, WordEffect } from "@/types/transcript";
+import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
 
 const MICROSECONDS = 1_000_000;
-const PHOTO_DURATION_MICROS = 10_800_000_000;
 
 type DraftRecord = Record<string, unknown>;
 type Timerange = { start: number; duration: number };
@@ -229,35 +228,6 @@ function baseSegment(
   };
 }
 
-function applyTextWordEffect(
-  textSegment: DraftRecord,
-  materials: DraftRecord,
-  effect: WordEffect,
-  textScale: number,
-  segmentDurationMicros: number,
-  theme: ThemeId,
-): void {
-  const plan = buildCapCutWordEffectExportPlan(effect, textScale, segmentDurationMicros, theme);
-
-  if (plan.keyframes.length > 0) {
-    textSegment.common_keyframes = plan.keyframes;
-  }
-
-  const extraRefs = textSegment.extra_material_refs;
-  if (!Array.isArray(extraRefs)) {
-    return;
-  }
-
-  const animationPlans = [plan.introAnimation, plan.loopAnimation].filter(
-    (entry): entry is NonNullable<typeof entry> => entry !== undefined,
-  );
-
-  for (const animationPlan of animationPlans) {
-    pushMaterial(materials, "material_animations", animationPlan.material);
-    extraRefs.push(animationPlan.materialId);
-  }
-}
-
 function applyTextSegmentLayout(textSegment: DraftRecord, preset: SubtitleStylePreset): void {
   const textClip = textSegment.clip as DraftRecord;
   textClip.scale = { x: preset.textScale, y: preset.textScale };
@@ -337,6 +307,78 @@ export interface MediaDownloadSummary {
   skipped: MediaDownloadSkip[];
 }
 
+function pushAudioMaterial(
+  materials: DraftRecord,
+  options: {
+    url: string;
+    filename: string;
+    durationMicros: number;
+  },
+): string {
+  const audioMaterialId = uuid();
+  pushMaterial(materials, "audios", {
+    id: audioMaterialId,
+    path: assetRelativePath(options.url, "audio"),
+    name: options.filename,
+    duration: options.durationMicros,
+    type: "extract_music",
+    category_id: "",
+    category_name: "local",
+    check_flag: 1,
+    music_id: "",
+    request_id: "",
+    source_platform: 0,
+    team_id: "",
+    text_id: "",
+    tone_category_id: "",
+    tone_category_name: "",
+    tone_effect_id: "",
+    tone_effect_name: "",
+    tone_platform: "",
+    tone_second_category_id: "",
+    tone_second_category_name: "",
+    tone_speaker: "",
+    tone_type: "",
+    wave_points: [],
+  });
+  return audioMaterialId;
+}
+
+function appendAudioSegment(
+  materials: DraftRecord,
+  audioTrack: DraftRecord,
+  options: {
+    url: string;
+    startMicros: number;
+    durationMicros: number;
+    materialDurationMicros: number;
+    volume: number;
+    renderIndex: number;
+    filenameFallback?: string;
+  },
+): void {
+  const filename = filenameFromUrl(options.url, options.filenameFallback ?? "audio.mp3");
+  const audioMaterialId = pushAudioMaterial(materials, {
+    url: options.url,
+    filename,
+    durationMicros: options.materialDurationMicros,
+  });
+
+  const audioCompanions = createCompanionMaterials("audio");
+  registerCompanions(materials, audioCompanions);
+  const audioSegment = baseSegment(
+    uuid(),
+    audioMaterialId,
+    String(audioTrack.id),
+    { start: options.startMicros, duration: options.durationMicros },
+    audioCompanions.ids,
+    options.renderIndex,
+  );
+  audioSegment.clip = null;
+  audioSegment.volume = options.volume;
+  (audioTrack.segments as DraftRecord[]).push(audioSegment);
+}
+
 function collectMediaDownloadItems(projectData: CapCutProjectData): MediaDownloadItem[] {
   const seenUrls = new Set<string>();
   const items: MediaDownloadItem[] = [];
@@ -356,20 +398,27 @@ function collectMediaDownloadItems(projectData: CapCutProjectData): MediaDownloa
   };
 
   addItem(projectData.videoUrl, "video", true);
+  addItem(CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL, "audio");
+  addItem(CAPCUT_EXPORT_AUDIO.SFX_POP_URL, "audio");
+  addItem(CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL, "audio");
+  addItem(CAPCUT_EXPORT_AUDIO.SFX_FAH_URL, "audio");
 
   for (const entry of projectData.transcript) {
     if (!entry.highlight) {
       continue;
     }
 
-    addItem(normalizeAssetUrl(entry.asset_url), "video");
-    addItem(entry.sfx_url, "audio");
+    addItem(resolveKeywordSfxUrl(entry.sfx_url), "audio");
   }
 
   return items;
 }
 
 async function downloadUrlToFile(url: string, destPath: string): Promise<void> {
+  if (await pathExists(destPath)) {
+    return;
+  }
+
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -670,9 +719,9 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
 
   const materials = createEmptyMaterials();
   const videoTrack = createTrack("video", "Main Video");
-  const assetTrack = createTrack("video", "3D Asset Overlays");
   const textTrack = createTrack("text", "Kinetic Subtitles");
-  const audioTrack = createTrack("audio", "Keyword SFX");
+  const sfxTrack = createTrack("audio", "SFX");
+  const bgmTrack = createTrack("audio", "Background Music");
 
   const videoMaterialId = uuid();
   const videoFilename = filenameFromUrl(input.videoUrl, "source-video.mp4");
@@ -762,118 +811,31 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       15000,
     );
     applyTextSegmentLayout(textSegment, subtitlePreset);
-    if (entry.effect) {
-      applyTextWordEffect(
-        textSegment,
-        materials,
-        entry.effect,
-        subtitlePreset.textScale,
-        duration,
-        input.theme,
-      );
-    }
     (textTrack.segments as DraftRecord[]).push(textSegment);
 
-    const assetUrl = normalizeAssetUrl(entry.asset_url);
-    if (entry.highlight && assetUrl) {
-      const assetMaterialId = uuid();
-      const assetFilename = filenameFromUrl(assetUrl, "asset.png");
-      const assetDuration = Math.min(duration, 700_000);
-      const assetScale = subtitlePreset.assetScale;
-
-      pushMaterial(materials, "videos", {
-        id: assetMaterialId,
-        type: "photo",
-        path: assetRelativePath(assetUrl, "video"),
-        material_name: assetFilename,
-        duration: PHOTO_DURATION_MICROS,
-        width: 512,
-        height: 512,
-        category_id: "",
-        category_name: "local",
-        check_flag: 7,
-        crop: defaultCrop(),
-        has_audio: false,
-        extra_type_option: 0,
-        formula_id: "",
-        freeze: null,
-        material_url: assetUrl,
-        source_platform: 0,
-        team_id: "",
-        stable: { matrix_path: "", stable_level: 0, time_range: { duration: 0, start: 0 } },
-        video_algorithm: {
-          algorithms: [],
-          deflicker: null,
-          motion_blur_config: null,
-          noise_reduction: null,
-          path: "",
-          quality_enhance: null,
-          time_range: null,
-        },
+    if (entry.highlight) {
+      const keywordStartMicros = toMicroseconds(entry.start);
+      appendAudioSegment(materials, sfxTrack, {
+        url: resolveKeywordSfxUrl(entry.sfx_url),
+        startMicros: keywordStartMicros,
+        durationMicros: CAPCUT_EXPORT_AUDIO.sfxClipDurationMicros,
+        materialDurationMicros: CAPCUT_EXPORT_AUDIO.sfxClipDurationMicros,
+        volume: CAPCUT_EXPORT_AUDIO.sfxVolume,
+        renderIndex: 11000,
+        filenameFallback: "whoosh.mp3",
       });
-
-      const assetCompanions = createCompanionMaterials("video");
-      registerCompanions(materials, assetCompanions);
-      const assetSegment = baseSegment(
-        uuid(),
-        assetMaterialId,
-        String(assetTrack.id),
-        { start: startMicros, duration: assetDuration },
-        assetCompanions.ids,
-        14001,
-      );
-      const assetClip = assetSegment.clip as DraftRecord;
-      assetClip.scale = { x: assetScale, y: assetScale };
-      assetClip.transform = { x: subtitlePreset.assetX, y: subtitlePreset.assetY };
-      (assetTrack.segments as DraftRecord[]).push(assetSegment);
-    }
-
-    if (entry.highlight && entry.sfx_url) {
-      const audioMaterialId = uuid();
-      const sfxFilename = filenameFromUrl(entry.sfx_url, "sfx.mp3");
-      const sfxDuration = Math.min(duration, 500_000);
-
-      pushMaterial(materials, "audios", {
-        id: audioMaterialId,
-        path: assetRelativePath(entry.sfx_url, "audio"),
-        name: sfxFilename,
-        duration: sfxDuration,
-        type: "extract_music",
-        category_id: "",
-        category_name: "local",
-        check_flag: 1,
-        music_id: "",
-        request_id: "",
-        source_platform: 0,
-        team_id: "",
-        text_id: "",
-        tone_category_id: "",
-        tone_category_name: "",
-        tone_effect_id: "",
-        tone_effect_name: "",
-        tone_platform: "",
-        tone_second_category_id: "",
-        tone_second_category_name: "",
-        tone_speaker: "",
-        tone_type: "",
-        wave_points: [],
-      });
-
-      const audioCompanions = createCompanionMaterials("audio");
-      registerCompanions(materials, audioCompanions);
-      const audioSegment = baseSegment(
-        uuid(),
-        audioMaterialId,
-        String(audioTrack.id),
-        { start: startMicros, duration: sfxDuration },
-        audioCompanions.ids,
-        11000,
-      );
-      audioSegment.clip = null;
-      audioSegment.volume = 0.85;
-      (audioTrack.segments as DraftRecord[]).push(audioSegment);
     }
   }
+
+  appendAudioSegment(materials, bgmTrack, {
+    url: CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL,
+    startMicros: 0,
+    durationMicros: durationMicros,
+    materialDurationMicros: durationMicros,
+    volume: CAPCUT_EXPORT_AUDIO.bgmVolume,
+    renderIndex: 10500,
+    filenameFallback: "lofi_relax.mp3",
+  });
 
   const draftContent: CapCutDraftContent = {
     id: draftId,
@@ -893,7 +855,7 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       app_version: "9.0.0",
       os: "mac",
     },
-    tracks: [videoTrack, assetTrack, textTrack, audioTrack],
+    tracks: [videoTrack, textTrack, sfxTrack, bgmTrack],
     materials,
     extra_info: {
       created_via: "motion-decorator",
@@ -920,6 +882,8 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     "5. Reopen CapCut and relink any missing media if prompted.",
     "",
     "Timeline units: microseconds (1 second = 1,000,000).",
+    "Timeline tracks: Main Video, Kinetic Subtitles, SFX, Background Music.",
+    "Audio mix: BGM ~12%, keyword SFX ~80%.",
     "Canvas: 1080 x 1920 (9:16).",
   ].join("\n");
 
