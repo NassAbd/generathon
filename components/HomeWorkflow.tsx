@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ProcessingLoader } from "@/components/ProcessingLoader";
 import { VideoUploader, type UploadResult } from "@/components/VideoUploader";
@@ -25,9 +26,16 @@ function countHighlights(transcript: TranscriptData | null | undefined): number 
 }
 
 export function HomeWorkflow(): JSX.Element {
+  const router = useRouter();
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [processingError, setProcessingError] = useState<string | null>(null);
   const { project } = useProjectStatus(activeProjectId);
+
+  useEffect(() => {
+    if (project?.status === "completed" && project.id) {
+      router.push(`/project/${project.id}`);
+    }
+  }, [project?.id, project?.status, router]);
 
   const handleUploadComplete = useCallback(async (result: UploadResult): Promise<void> => {
     setProcessingError(null);

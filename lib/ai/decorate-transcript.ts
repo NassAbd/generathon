@@ -3,6 +3,7 @@ import {
   buildAssetCatalogPrompt,
   getAssetUrl,
   getSfxUrl,
+  isAllowedAssetFile,
   SFX_FILES,
 } from "@/lib/assets/catalog";
 import type { LlmDecoration, TranscriptData, WhisperWord, WordEffect } from "@/types/transcript";
@@ -34,10 +35,11 @@ function buildSystemPrompt(minHighlights: number, maxHighlights: number): string
     "Prioritize emotional, action, or hook words — not filler or stop words.",
     "For each selected word, assign:",
     "- effect: one of bounce, shake, glow",
-    "- asset: a PNG filename from the catalog that matches the word's meaning",
+    `- asset: MUST be exactly one of: ${ASSET_FILES.join(", ")}`,
     "- sfx: an SFX filename from the catalog",
     buildAssetCatalogPrompt(),
     'Return strict JSON: {"decorations":[{"index":0,"effect":"bounce","asset":"fire.png","sfx":"pop.mp3"}]}',
+    "The asset field must match one allowed filename character-for-character. Reject any other asset name.",
     "Use zero-based index matching the input word list. Do not repeat indices.",
   ].join("\n");
 }
@@ -76,10 +78,6 @@ function isWordEffect(value: string): value is WordEffect {
   return WORD_EFFECTS.includes(value as WordEffect);
 }
 
-function isAssetFile(value: string): boolean {
-  return (ASSET_FILES as readonly string[]).includes(value);
-}
-
 function isSfxFile(value: string): boolean {
   return (SFX_FILES as readonly string[]).includes(value);
 }
@@ -97,7 +95,7 @@ function validateDecorations(
       decoration.index >= wordCount ||
       seenIndices.has(decoration.index) ||
       !isWordEffect(decoration.effect) ||
-      !isAssetFile(decoration.asset) ||
+      !isAllowedAssetFile(decoration.asset) ||
       !isSfxFile(decoration.sfx)
     ) {
       return false;
