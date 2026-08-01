@@ -15,8 +15,8 @@ export interface ThemePreset {
 export const THEME_PRESETS: Record<ThemeId, ThemePreset> = {
   pop_3d: {
     id: "pop_3d",
-    label: "Pop 3D",
-    description: "Vibrant colors, 3D bounce",
+    label: "Viral Yellow / Hormozi",
+    description: "Bold uppercase hooks, yellow word pops, 3D badges",
     subtitleClass: "font-sans text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]",
     highlightClass: "font-bold text-yellow-300",
     pillClass: "bg-gradient-to-r from-violet-600/90 to-fuchsia-600/90 border border-white/20",
@@ -26,8 +26,8 @@ export const THEME_PRESETS: Record<ThemeId, ThemePreset> = {
   },
   cyberpunk: {
     id: "cyberpunk",
-    label: "Cyberpunk",
-    description: "Neon glow, glitch accents",
+    label: "Cyberpunk Green",
+    description: "Neon green active words, glitch accents",
     subtitleClass: "font-mono tracking-wider text-cyan-100 drop-shadow-[0_0_12px_rgba(34,211,238,0.6)]",
     highlightClass: "font-bold text-fuchsia-300",
     pillClass: "bg-black/70 border border-cyan-400/50 shadow-[0_0_24px_rgba(34,211,238,0.25)]",
@@ -37,8 +37,8 @@ export const THEME_PRESETS: Record<ThemeId, ThemePreset> = {
   },
   minimal_tech: {
     id: "minimal_tech",
-    label: "Minimal Tech",
-    description: "Clean dark-mode typography",
+    label: "Clean White",
+    description: "Minimal high-contrast typography",
     subtitleClass: "font-light tracking-tight text-slate-100",
     highlightClass: "font-semibold text-white",
     pillClass: "bg-slate-900/80 border border-slate-600/60 backdrop-blur-sm",

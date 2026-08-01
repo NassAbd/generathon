@@ -2,7 +2,13 @@ import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { normalizeAssetUrl } from "@/lib/assets/catalog";
-import type { TranscriptData, WordEffect } from "@/types/transcript";
+import {
+  buildCapCutSubtitleSegmentPlans,
+  getCapCutTextMaterialProps,
+  getSubtitlePreset,
+  type SubtitleStylePreset,
+} from "@/lib/capcut/presets";
+import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
 
 const MICROSECONDS = 1_000_000;
@@ -222,70 +228,37 @@ function baseSegment(
   };
 }
 
-function themeFontName(theme: ThemeId): string {
-  switch (theme) {
-    case "cyberpunk":
-      return "Courier";
-    case "minimal_tech":
-      return "Inter";
-    default:
-      return "Montserrat";
+function applyTextSegmentLayout(textSegment: DraftRecord, preset: SubtitleStylePreset): void {
+  const textClip = textSegment.clip as DraftRecord;
+  textClip.scale = { x: preset.textScale, y: preset.textScale };
+  textClip.transform = { x: 0.0, y: preset.subtitleY };
+  textClip.rotation = 0.0;
+  textSegment.uniform_scale = { on: true, value: preset.textScale };
+}
+
+function logTextSegmentScaleSample(draft: CapCutDraftContent): void {
+  const textTrack = draft.tracks.find((track) => track.type === "text");
+  if (!textTrack || !Array.isArray(textTrack.segments) || textTrack.segments.length === 0) {
+    return;
   }
-}
 
-function themeTextColor(theme: ThemeId): string {
-  switch (theme) {
-    case "cyberpunk":
-      return "#67E8F9";
-    case "minimal_tech":
-      return "#F8FAFC";
-    default:
-      return "#FFFFFF";
-  }
-}
+  const sampleSegment = textTrack.segments[0] as DraftRecord;
+  const materialId = sampleSegment.material_id;
+  const textMaterials = draft.materials.texts;
+  const sampleMaterial =
+    Array.isArray(textMaterials) && typeof materialId === "string"
+      ? (textMaterials as DraftRecord[]).find((material) => material.id === materialId)
+      : undefined;
 
-function themeHighlightColor(theme: ThemeId): string {
-  switch (theme) {
-    case "cyberpunk":
-      return "#F472B6";
-    case "minimal_tech":
-      return "#E2E8F0";
-    default:
-      return "#FDE047";
-  }
-}
+  const clip = sampleSegment.clip as DraftRecord | undefined;
+  const clipScale = clip?.scale as DraftRecord | undefined;
 
-function hexToRgb(hex: string): [number, number, number] {
-  const normalized = hex.replace("#", "").slice(0, 6);
-  return [
-    Number.parseInt(normalized.slice(0, 2), 16) / 255,
-    Number.parseInt(normalized.slice(2, 4), 16) / 255,
-    Number.parseInt(normalized.slice(4, 6), 16) / 255,
-  ];
-}
-
-function buildTextContent(text: string, fontSize: number, color: [number, number, number]): string {
-  const utf16ByteLength = Buffer.from(text, "utf16le").length;
-  return JSON.stringify({
-    text,
-    styles: [
-      {
-        range: [0, utf16ByteLength],
-        size: fontSize,
-        bold: false,
-        italic: false,
-        underline: false,
-        fill: {
-          alpha: 1,
-          content: {
-            render_type: "solid",
-            solid: { alpha: 1, color },
-          },
-        },
-      },
-    ],
-    layer_weight: 1,
-    effect: [],
+  console.warn("[CapCut export] Text segment scale sample:", {
+    font_size: sampleMaterial?.font_size,
+    clip_scale_x: clipScale?.x,
+    clip_scale_y: clipScale?.y,
+    uniform_scale: sampleSegment.uniform_scale,
+    segment_count: textTrack.segments.length,
   });
 }
 
@@ -300,20 +273,6 @@ function defaultCrop(): DraftRecord {
     upper_right_x: 1,
     upper_right_y: 0,
   };
-}
-
-function effectScale(effect: WordEffect | undefined, highlight: boolean): number {
-  if (!highlight) return 1;
-  switch (effect) {
-    case "bounce":
-      return 1.2;
-    case "shake":
-      return 1.08;
-    case "glow":
-      return 1.15;
-    default:
-      return 1.1;
-  }
 }
 
 function assetRelativePath(url: string, kind: "video" | "audio"): string {
@@ -743,52 +702,23 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
   );
   (videoTrack.segments as DraftRecord[]).push(videoSegment);
 
-  input.transcript.forEach((entry) => {
-    const startMicros = toMicroseconds(entry.start);
-    const duration = Math.max(toMicroseconds(entry.end - entry.start), 80_000);
+  const subtitlePreset = getSubtitlePreset(input.theme);
+  const subtitleSegmentPlans = buildCapCutSubtitleSegmentPlans(
+    input.transcript,
+    subtitlePreset,
+    toMicroseconds,
+  );
+
+  for (const plan of subtitleSegmentPlans) {
+    const entry = input.transcript[plan.wordIndex];
+    const startMicros = plan.startMicros;
+    const duration = plan.durationMicros;
 
     const textMaterialId = uuid();
-    const fontSize = entry.highlight ? 18 : 15;
-    const textColor = entry.highlight ? themeHighlightColor(input.theme) : themeTextColor(input.theme);
 
     pushMaterial(materials, "texts", {
       id: textMaterialId,
-      type: "text",
-      content: buildTextContent(entry.word, fontSize, hexToRgb(textColor)),
-      alignment: 1,
-      font_size: fontSize,
-      font_name: themeFontName(input.theme),
-      text_color: textColor,
-      typesetting: 0,
-      letter_spacing: 0,
-      line_spacing: 0.02,
-      line_feed: 1,
-      line_max_width: 0.82,
-      force_apply_line_max_width: false,
-      check_flag: 7,
-      fixed_width: -1,
-      fixed_height: -1,
-      text_alpha: 1,
-      border_color: "#000000",
-      border_width: entry.highlight ? 0.08 : 0.04,
-      border_alpha: 1,
-      has_shadow: true,
-      shadow_alpha: 0.8,
-      shadow_angle: -45,
-      shadow_color: "#000000",
-      shadow_distance: entry.highlight ? 8 : 5,
-      shadow_smoothing: 1,
-      background_color: "#000000",
-      background_alpha: 0,
-      background_style: 0,
-      background_round_radius: 0,
-      background_width: 0.14,
-      background_height: 0.14,
-      background_horizontal_offset: 0,
-      background_vertical_offset: 0,
-      vertical: false,
-      is_rich_text: false,
-      use_effect_default_color: false,
+      ...getCapCutTextMaterialProps(plan.phraseWords, subtitlePreset),
     });
 
     const textCompanions = createCompanionMaterials("text");
@@ -801,10 +731,7 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       textCompanions.ids,
       15000,
     );
-    const textClip = textSegment.clip as DraftRecord;
-    const scale = effectScale(entry.effect, entry.highlight);
-    textClip.scale = { x: scale, y: scale };
-    textClip.transform = { x: 0, y: 0.72 };
+    applyTextSegmentLayout(textSegment, subtitlePreset);
     (textTrack.segments as DraftRecord[]).push(textSegment);
 
     const assetUrl = normalizeAssetUrl(entry.asset_url);
@@ -812,6 +739,7 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       const assetMaterialId = uuid();
       const assetFilename = filenameFromUrl(assetUrl, "asset.png");
       const assetDuration = Math.min(duration, 700_000);
+      const assetScale = subtitlePreset.assetScale;
 
       pushMaterial(materials, "videos", {
         id: assetMaterialId,
@@ -855,8 +783,8 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
         14001,
       );
       const assetClip = assetSegment.clip as DraftRecord;
-      assetClip.scale = { x: 0.85, y: 0.85 };
-      assetClip.transform = { x: 0.55, y: -0.55 };
+      assetClip.scale = { x: assetScale, y: assetScale };
+      assetClip.transform = { x: subtitlePreset.assetX, y: subtitlePreset.assetY };
       (assetTrack.segments as DraftRecord[]).push(assetSegment);
     }
 
@@ -905,7 +833,7 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       audioSegment.volume = 0.85;
       (audioTrack.segments as DraftRecord[]).push(audioSegment);
     }
-  });
+  }
 
   const draftContent: CapCutDraftContent = {
     id: draftId,
@@ -1086,7 +1014,12 @@ function enrichSegmentForDraftInfo(segment: DraftRecord, trackType: string): Dra
     enable_adjust: !isAudio,
     enable_hsl: !isAudio,
     enable_adjust_mask: !isAudio,
-    uniform_scale: isAudio ? null : { on: true, value: 1.0 },
+    uniform_scale:
+      isAudio
+        ? null
+        : typeof segment.uniform_scale === "object" && segment.uniform_scale !== null
+          ? segment.uniform_scale
+          : { on: true, value: 1.0 },
     clip: enrichedClip,
     raw_segment_id: isAudio ? "" : String(segment.raw_segment_id ?? ""),
     render_index: typeof segment.render_index === "number" ? segment.render_index : 0,
@@ -1480,6 +1413,7 @@ export async function writeDirectToCapCut(
     durationSeconds: projectData.durationSeconds,
     theme: projectData.theme,
   });
+  logTextSegmentScaleSample(draftContent);
 
   const capCutRoot = getCapCutDraftsRoot();
   const { folderPath: draftFolderPath, usedExistingFolder } = await resolveCapCutDraftFolder(capCutRoot);
