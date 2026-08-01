@@ -12,7 +12,10 @@ import {
 } from "@/lib/player/bgmSync";
 import {
   rebuildTriggeredKeywordSfx,
+  shouldResetHookSfx,
+  syncHookSfxAtTime,
   syncKeywordSfxAtTime,
+  type SfxPlaybackEvent,
 } from "@/lib/player/keywordSfxSync";
 import { SfxManager } from "@/lib/player/sfxManager";
 import { findActiveWordIndex, normalizeTranscript } from "@/lib/player/transcriptIndex";
@@ -25,6 +28,7 @@ import {
   getSubtitlePreset,
   getWebSubtitleWordStyle,
   formatPhraseDisplayWord,
+  resolveSfxUrlForEvent,
 } from "@/lib/capcut/presets";
 import {
   computeSpeakerTrackingLayout,
@@ -115,6 +119,8 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
     const videoDimensionsRef = useRef<VideoSourceDimensions | null>(null);
     const faceDetectionStartedRef = useRef(false);
     const triggeredKeywordSfxRef = useRef<Set<number>>(new Set());
+    const hookSfxTriggeredRef = useRef(false);
+    const shotCutSfxPrimedRef = useRef(false);
     const rafRef = useRef<number | null>(null);
     const onActiveWordChangeRef = useRef(onActiveWordChange);
     const onVideoDimensionsChangeRef = useRef(onVideoDimensionsChange);
@@ -151,22 +157,27 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       sfxManagerRef.current.setMuted(video.muted);
     }, []);
 
-    const triggerKeywordSfx = useCallback((wordIndex: number, url: string) => {
+    const triggerSfx = useCallback((event: SfxPlaybackEvent) => {
       void sfxManagerRef.current.unlock().then(() => {
-        sfxManagerRef.current.play(url, wordIndex);
+        sfxManagerRef.current.play(event.url, event.slotKey);
       });
     }, []);
 
     const syncPlaybackAudio = useCallback(
       (currentTime: number) => {
+        hookSfxTriggeredRef.current = syncHookSfxAtTime(
+          currentTime,
+          hookSfxTriggeredRef.current,
+          triggerSfx,
+        );
         syncKeywordSfxAtTime(
           normalizedTranscript,
           currentTime,
           triggeredKeywordSfxRef.current,
-          triggerKeywordSfx,
+          triggerSfx,
         );
       },
-      [normalizedTranscript, triggerKeywordSfx],
+      [normalizedTranscript, triggerSfx],
     );
 
     const applyActiveIndex = useCallback(
@@ -191,6 +202,9 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
     const resetAudioForSeek = useCallback((seconds: number) => {
       sfxManagerRef.current.reset();
       triggeredKeywordSfxRef.current = rebuildTriggeredKeywordSfx(normalizedTranscript, seconds);
+      if (shouldResetHookSfx(seconds)) {
+        hookSfxTriggeredRef.current = false;
+      }
 
       const video = videoRef.current;
       const bgm = bgmRef.current;
@@ -254,11 +268,20 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       }
 
       const segmentKey = segmentShotKey(segment);
+      const isShotCut = shotCutSfxPrimedRef.current && segmentKey !== activeSegmentKeyRef.current;
       if (segmentKey === activeSegmentKeyRef.current) {
         return;
       }
 
       activeSegmentKeyRef.current = segmentKey;
+      shotCutSfxPrimedRef.current = true;
+
+      if (isShotCut && segment.startSeconds > 0.05) {
+        triggerSfx({
+          slotKey: `shot-${segmentKey}`,
+          url: resolveSfxUrlForEvent("shot-cut"),
+        });
+      }
 
       if (segment.layoutType === "split-screen") {
         const leftRaw =
@@ -299,7 +322,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       setActivePanOffsetX(singleLayout.offsetPercentX);
       setTopPanOffsetX(0);
       setBottomPanOffsetX(0);
-    }, []);
+    }, [triggerSfx]);
 
     const phraseBoundaryStarts = useMemo(() => {
       const blockSize = subtitlePreset.phraseBlockSize;
@@ -484,6 +507,8 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       faceDetectionStartedRef.current = false;
       speakerSegmentsRef.current = [];
       activeSegmentKeyRef.current = "";
+      shotCutSfxPrimedRef.current = false;
+      hookSfxTriggeredRef.current = false;
       setLayoutMode("single");
       setActivePanOffsetX(0);
       setTopPanOffsetX(0);

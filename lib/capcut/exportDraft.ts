@@ -2,11 +2,11 @@ import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  buildCapCutSfxSegmentPlans,
   buildCapCutSubtitleSegmentPlans,
   CAPCUT_EXPORT_AUDIO,
   getCapCutTextMaterialProps,
   getSubtitlePreset,
-  resolveKeywordSfxUrl,
   type SubtitleStylePreset,
 } from "@/lib/capcut/presets";
 import {
@@ -547,16 +547,18 @@ function collectMediaDownloadItems(projectData: CapCutProjectData): MediaDownloa
 
   addItem(projectData.videoUrl, "video", true);
   addItem(CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL, "audio");
-  addItem(CAPCUT_EXPORT_AUDIO.SFX_POP_URL, "audio");
+  addItem(CAPCUT_EXPORT_AUDIO.SFX_WHOOSH_URL, "audio");
   addItem(CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL, "audio");
   addItem(CAPCUT_EXPORT_AUDIO.SFX_FAH_URL, "audio");
 
-  for (const entry of projectData.transcript) {
-    if (!entry.highlight) {
-      continue;
-    }
+  const sfxPlans = buildCapCutSfxSegmentPlans(
+    projectData.transcript,
+    projectData.speakerOffsetSegments,
+    (seconds) => Math.max(0, Math.round(seconds * 1_000_000)),
+  );
 
-    addItem(resolveKeywordSfxUrl(entry.sfx_url), "audio");
+  for (const plan of sfxPlans) {
+    addItem(plan.url, "audio");
   }
 
   return items;
@@ -1040,19 +1042,29 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     textSegment.source_timerange = { start: 0, duration };
     applyTextSegmentLayout(textSegment, subtitlePreset);
     (textTrack.segments as DraftRecord[]).push(textSegment);
+  }
 
-    if (entry.highlight) {
-      const keywordStartMicros = toMicroseconds(entry.start);
-      appendAudioSegment(materials, sfxTrack, {
-        url: resolveKeywordSfxUrl(entry.sfx_url),
-        startMicros: keywordStartMicros,
-        durationMicros: CAPCUT_EXPORT_AUDIO.sfxClipDurationMicros,
-        materialDurationMicros: CAPCUT_EXPORT_AUDIO.sfxClipDurationMicros,
-        volume: CAPCUT_EXPORT_AUDIO.sfxVolume,
-        renderIndex: 11000,
-        filenameFallback: "whoosh.mp3",
-      });
-    }
+  const sfxSegmentPlans = buildCapCutSfxSegmentPlans(
+    input.transcript,
+    input.speakerOffsetSegments,
+    toMicroseconds,
+  );
+
+  for (const sfxPlan of sfxSegmentPlans) {
+    appendAudioSegment(materials, sfxTrack, {
+      url: sfxPlan.url,
+      startMicros: sfxPlan.startMicros,
+      durationMicros: CAPCUT_EXPORT_AUDIO.sfxClipDurationMicros,
+      materialDurationMicros: CAPCUT_EXPORT_AUDIO.sfxClipDurationMicros,
+      volume: CAPCUT_EXPORT_AUDIO.sfxVolume,
+      renderIndex: 11000,
+      filenameFallback:
+        sfxPlan.kind === "hook" || sfxPlan.kind === "keyword-strong"
+          ? "shocking.mp3"
+          : sfxPlan.kind === "shot-cut"
+            ? "whoosh.mp3"
+            : "fah.mp3",
+    });
   }
 
   appendAudioSegment(materials, bgmTrack, {

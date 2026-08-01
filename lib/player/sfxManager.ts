@@ -1,6 +1,6 @@
 interface ActiveSfxSource {
   source: AudioBufferSourceNode;
-  wordIndex: number;
+  slotKey: string | number;
 }
 
 /** Optional SFX assets that may 404 — fail silently without console noise. */
@@ -19,10 +19,12 @@ export class SfxManager {
   private gainNode: GainNode | null = null;
   private buffers = new Map<string, AudioBuffer>();
   private failedUrls = new Set<string>();
-  private activeSources = new Map<number, ActiveSfxSource>();
+  private activeSources = new Map<string | number, ActiveSfxSource>();
   private muted = false;
   private volume = 1;
   private disabled = false;
+  private lastPlayedAtMs = -Infinity;
+  private readonly cooldownMs = 1500;
 
   async preload(urls: string[]): Promise<void> {
     if (this.disabled) {
@@ -98,8 +100,17 @@ export class SfxManager {
     this.applyGain();
   }
 
-  play(url: string | undefined, wordIndex: number): void {
+  play(
+    url: string | undefined,
+    slotKey: string | number,
+    options?: { skipCooldown?: boolean },
+  ): void {
     if (!url || this.muted || this.disabled || this.failedUrls.has(url)) {
+      return;
+    }
+
+    const now = performance.now();
+    if (!options?.skipCooldown && now - this.lastPlayedAtMs < this.cooldownMs) {
       return;
     }
 
@@ -110,27 +121,28 @@ export class SfxManager {
         return;
       }
 
-      this.stopWord(wordIndex);
+      this.stopSlot(slotKey);
 
       const source = this.context.createBufferSource();
       source.buffer = buffer;
       source.connect(this.gainNode);
       source.onended = () => {
-        const active = this.activeSources.get(wordIndex);
+        const active = this.activeSources.get(slotKey);
         if (active?.source === source) {
-          this.activeSources.delete(wordIndex);
+          this.activeSources.delete(slotKey);
         }
       };
       source.start(0);
-      this.activeSources.set(wordIndex, { source, wordIndex });
+      this.activeSources.set(slotKey, { source, slotKey });
+      this.lastPlayedAtMs = now;
     } catch {
       this.failedUrls.add(url);
     }
   }
 
   reset(): void {
-    for (const wordIndex of [...this.activeSources.keys()]) {
-      this.stopWord(wordIndex);
+    for (const slotKey of [...this.activeSources.keys()]) {
+      this.stopSlot(slotKey);
     }
     this.activeSources.clear();
   }
@@ -152,8 +164,8 @@ export class SfxManager {
     this.gainNode.gain.value = this.muted ? 0 : this.volume;
   }
 
-  private stopWord(wordIndex: number): void {
-    const active = this.activeSources.get(wordIndex);
+  private stopSlot(slotKey: string | number): void {
+    const active = this.activeSources.get(slotKey);
     if (!active) {
       return;
     }
@@ -164,6 +176,6 @@ export class SfxManager {
       // Source may have already ended.
     }
 
-    this.activeSources.delete(wordIndex);
+    this.activeSources.delete(slotKey);
   }
 }

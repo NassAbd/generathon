@@ -3,6 +3,7 @@ import {
   buildSpeakerOffsetSegmentRanges,
   createDefaultSpeakerOffsetSegment,
   mapNormalizedFaceCenterXToOffsetPercentX,
+  MAX_SINGLE_SPEAKER_OFFSET_PERCENT,
   normalizeSpeakerOffsetSegments,
   SPLIT_SCREEN_DEFAULT_LEFT_CENTER_X,
   SPLIT_SCREEN_DEFAULT_RIGHT_CENTER_X,
@@ -34,6 +35,12 @@ const SPLIT_OFFSET_MERGE_THRESHOLD = 5;
 
 /** Middle segments shorter than this (seconds) may be absorbed into surrounding layout. */
 const LAYOUT_JITTER_MAX_DURATION_SECONDS = 2;
+
+/** Minimum raw offset delta (%) before reframing within the same continuous shot. */
+const CONTINUOUS_OFFSET_HOLD_THRESHOLD = 15;
+
+/** Extra margin around the detected face box when computing pan (fraction of frame width). */
+const FACE_HEAD_MARGIN_FRACTION = 0.1;
 
 export type SpeakerDetectionSource = "face" | "subject-fallback" | "none";
 
@@ -654,12 +661,13 @@ async function detectSegmentLayout(
   }
 
   if (detections.length === 1 && frameWidth > 0) {
-    const normalizedCenterX =
-      (detections[0].box.x + detections[0].box.width / 2) / frameWidth;
+    const faceBox = detections[0].box;
+    const normalizedCenterX = (faceBox.x + faceBox.width / 2) / frameWidth;
+    const normalizedFaceWidth = faceBox.width / frameWidth;
 
     return {
       layoutType: "single",
-      offsetPercentX: mapNormalizedFaceCenterXToOffsetPercentX(normalizedCenterX),
+      offsetPercentX: mapFaceDetectionToSpeakerOffset(normalizedCenterX, normalizedFaceWidth),
     };
   }
 
@@ -678,6 +686,86 @@ async function detectSegmentLayout(
     layoutType: "single",
     offsetPercentX: 0,
   };
+}
+
+function clampRawSpeakerOffset(offsetPercentX: number): number {
+  return Math.max(
+    -MAX_SINGLE_SPEAKER_OFFSET_PERCENT,
+    Math.min(MAX_SINGLE_SPEAKER_OFFSET_PERCENT, offsetPercentX),
+  );
+}
+
+/**
+ * Maps a detected face box to a conservative pan offset with headroom.
+ * Keeps ears/head edges inside the 9:16 crop by attenuating aggressive pans.
+ */
+function mapFaceDetectionToSpeakerOffset(
+  normalizedCenterX: number,
+  normalizedFaceWidth: number,
+): number {
+  const clampedCenter = Math.max(0, Math.min(1, normalizedCenterX));
+  const clampedWidth = Math.max(0.05, Math.min(0.65, normalizedFaceWidth));
+
+  const centerDeadZone = 0.08 + clampedWidth * 0.12;
+  if (Math.abs(clampedCenter - 0.5) <= centerDeadZone) {
+    return 0;
+  }
+
+  let rawOffset = mapNormalizedFaceCenterXToOffsetPercentX(clampedCenter);
+
+  const edgeMargin = clampedWidth / 2 + FACE_HEAD_MARGIN_FRACTION;
+  const nearLeftEdge = clampedCenter < edgeMargin;
+  const nearRightEdge = clampedCenter > 1 - edgeMargin;
+  if (nearLeftEdge || nearRightEdge) {
+    rawOffset *= 0.72;
+  } else {
+    rawOffset *= 0.86;
+  }
+
+  return clampRawSpeakerOffset(rawOffset);
+}
+
+function stabilizeContinuousOffsets(segments: SpeakerOffsetSegment[]): SpeakerOffsetSegment[] {
+  if (segments.length <= 1) {
+    return segments;
+  }
+
+  const stabilized: SpeakerOffsetSegment[] = [{ ...segments[0] }];
+
+  for (let index = 1; index < segments.length; index += 1) {
+    const previousSegment = stabilized[stabilized.length - 1];
+    const currentSegment = { ...segments[index] };
+
+    if (previousSegment.layoutType === "single" && currentSegment.layoutType === "single") {
+      if (
+        Math.abs(currentSegment.offsetPercentX - previousSegment.offsetPercentX) <
+        CONTINUOUS_OFFSET_HOLD_THRESHOLD
+      ) {
+        currentSegment.offsetPercentX = previousSegment.offsetPercentX;
+      }
+    } else if (
+      previousSegment.layoutType === "split-screen" &&
+      currentSegment.layoutType === "split-screen"
+    ) {
+      const previousLeft = resolveSplitLeftOffset(previousSegment);
+      const previousRight = resolveSplitRightOffset(previousSegment);
+      const currentLeft = resolveSplitLeftOffset(currentSegment);
+      const currentRight = resolveSplitRightOffset(currentSegment);
+
+      currentSegment.leftOffsetPercentX =
+        Math.abs(currentLeft - previousLeft) < CONTINUOUS_OFFSET_HOLD_THRESHOLD
+          ? previousLeft
+          : currentLeft;
+      currentSegment.rightOffsetPercentX =
+        Math.abs(currentRight - previousRight) < CONTINUOUS_OFFSET_HOLD_THRESHOLD
+          ? previousRight
+          : currentRight;
+    }
+
+    stabilized.push(currentSegment);
+  }
+
+  return stabilized;
 }
 
 function segmentDurationSeconds(segment: SpeakerOffsetSegment): number {
@@ -943,7 +1031,8 @@ export function mergeSpeakerOffsetSegments(segments: SpeakerOffsetSegment[]): Sp
   }
 
   const rawCount = segments.length;
-  const afterSimilarityMerge = mergeSimilarContinuousSegments(segments);
+  const afterOffsetStabilization = stabilizeContinuousOffsets(segments);
+  const afterSimilarityMerge = mergeSimilarContinuousSegments(afterOffsetStabilization);
   const afterJitterSmooth = smoothLayoutJitter(afterSimilarityMerge);
   const mergedSegments = mergeSimilarContinuousSegments(afterJitterSmooth);
 

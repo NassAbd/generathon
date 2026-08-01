@@ -1,5 +1,6 @@
 import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
+import type { SpeakerOffsetSegment } from "@/lib/capcut/video-effects";
 
 export type RgbColor = [number, number, number];
 
@@ -491,23 +492,30 @@ export function getWebSubtitleWordStyle(
 
 /** CapCut export sound design — live Supabase public URLs and mix levels. */
 export const CAPCUT_EXPORT_AUDIO = {
-  SFX_POP_URL:
+  SFX_WHOOSH_URL:
     "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/whoosh.mp3",
   SFX_SHOCKING_URL:
     "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/shocking.mp3",
   SFX_FAH_URL:
     "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/fah.mp3",
+  /** @deprecated Use SFX_WHOOSH_URL */
+  SFX_POP_URL:
+    "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/whoosh.mp3",
   DEFAULT_BGM_URL:
     "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/bgm/lofi_relax.mp3",
   bgmVolume: 0.12,
   sfxVolume: 0.8,
-  /** Max keyword SFX clip length on the timeline (microseconds). */
+  /** Minimum gap between SFX triggers (seconds). */
+  sfxCooldownSeconds: 1.5,
+  /** Max SFX clip length on the timeline (microseconds). */
   sfxClipDurationMicros: 500_000,
 } as const;
 
+export type SfxEventKind = "hook" | "shot-cut" | "keyword" | "keyword-strong";
+
 const SFX_URL_BY_FILENAME: Record<string, string> = {
-  "whoosh.mp3": CAPCUT_EXPORT_AUDIO.SFX_POP_URL,
-  "pop.mp3": CAPCUT_EXPORT_AUDIO.SFX_POP_URL,
+  "whoosh.mp3": CAPCUT_EXPORT_AUDIO.SFX_WHOOSH_URL,
+  "pop.mp3": CAPCUT_EXPORT_AUDIO.SFX_WHOOSH_URL,
   "shocking.mp3": CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL,
   "fah.mp3": CAPCUT_EXPORT_AUDIO.SFX_FAH_URL,
 };
@@ -521,9 +529,35 @@ function extractAudioFilename(urlOrFilename: string): string | null {
   }
 }
 
-export function resolveKeywordSfxUrl(sfxUrl: string | undefined): string {
+export function resolveSfxUrlForEvent(kind: SfxEventKind): string {
+  switch (kind) {
+    case "hook":
+    case "keyword-strong":
+      return CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL;
+    case "shot-cut":
+      return CAPCUT_EXPORT_AUDIO.SFX_WHOOSH_URL;
+    case "keyword":
+      return CAPCUT_EXPORT_AUDIO.SFX_FAH_URL;
+  }
+}
+
+/** Maps yellow punchword highlights — fah by default, shocking every 3rd keyword. */
+export function resolveKeywordHighlightSfxUrl(highlightIndex: number): string {
+  return highlightIndex % 3 === 2
+    ? CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL
+    : CAPCUT_EXPORT_AUDIO.SFX_FAH_URL;
+}
+
+export function resolveKeywordSfxUrl(
+  sfxUrl: string | undefined,
+  highlightIndex?: number,
+): string {
+  if (highlightIndex !== undefined) {
+    return resolveKeywordHighlightSfxUrl(highlightIndex);
+  }
+
   if (!sfxUrl) {
-    return CAPCUT_EXPORT_AUDIO.SFX_POP_URL;
+    return CAPCUT_EXPORT_AUDIO.SFX_FAH_URL;
   }
 
   const filename = extractAudioFilename(sfxUrl);
@@ -532,4 +566,74 @@ export function resolveKeywordSfxUrl(sfxUrl: string | undefined): string {
   }
 
   return sfxUrl;
+}
+
+export interface CapCutSfxSegmentPlan {
+  startMicros: number;
+  url: string;
+  kind: SfxEventKind;
+}
+
+function applySfxCooldown<T extends { startMicros: number }>(
+  events: T[],
+  cooldownMicros: number,
+): T[] {
+  const sorted = [...events].sort((left, right) => left.startMicros - right.startMicros);
+  const kept: T[] = [];
+  let lastKeptMicros = -Infinity;
+
+  for (const event of sorted) {
+    if (event.startMicros - lastKeptMicros >= cooldownMicros) {
+      kept.push(event);
+      lastKeptMicros = event.startMicros;
+    }
+  }
+
+  return kept;
+}
+
+/** Builds hook, shot-cut, and keyword SFX plans with anti-spam cooldown. */
+export function buildCapCutSfxSegmentPlans(
+  transcript: TranscriptData,
+  speakerOffsetSegments: SpeakerOffsetSegment[] | undefined,
+  toMicroseconds: (seconds: number) => number,
+): CapCutSfxSegmentPlan[] {
+  const events: CapCutSfxSegmentPlan[] = [
+    {
+      startMicros: 0,
+      url: resolveSfxUrlForEvent("hook"),
+      kind: "hook",
+    },
+  ];
+
+  for (const segment of speakerOffsetSegments ?? []) {
+    if (segment.startSeconds <= 0.05) {
+      continue;
+    }
+
+    events.push({
+      startMicros: toMicroseconds(segment.startSeconds),
+      url: resolveSfxUrlForEvent("shot-cut"),
+      kind: "shot-cut",
+    });
+  }
+
+  let highlightIndex = 0;
+  for (const entry of transcript) {
+    if (!entry.highlight) {
+      continue;
+    }
+
+    events.push({
+      startMicros: toMicroseconds(entry.start),
+      url: resolveKeywordHighlightSfxUrl(highlightIndex),
+      kind: highlightIndex % 3 === 2 ? "keyword-strong" : "keyword",
+    });
+    highlightIndex += 1;
+  }
+
+  return applySfxCooldown(
+    events,
+    toMicroseconds(CAPCUT_EXPORT_AUDIO.sfxCooldownSeconds),
+  );
 }
