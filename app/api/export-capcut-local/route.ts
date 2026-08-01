@@ -1,3 +1,4 @@
+import type { SpeakerOffsetSegment } from "@/lib/capcut/video-effects";
 import { writeDirectToCapCut } from "@/lib/capcut/exportDraft";
 import { fetchProjectById } from "@/lib/projects/fetchProject";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -10,6 +11,8 @@ interface ExportCapCutLocalRequest {
   themeId?: string;
   sourceVideoWidth?: number;
   sourceVideoHeight?: number;
+  speakerOffsetPercentX?: number;
+  speakerOffsetSegments?: SpeakerOffsetSegment[];
 }
 
 function errorResponse(message: string, status: number): Response {
@@ -49,6 +52,8 @@ export async function POST(request: Request): Promise<Response> {
       theme: exportTheme,
       sourceVideoWidth: body.sourceVideoWidth,
       sourceVideoHeight: body.sourceVideoHeight,
+      speakerOffsetPercentX: body.speakerOffsetPercentX,
+      speakerOffsetSegments: body.speakerOffsetSegments,
     });
 
     const supabase = getSupabaseServerClient();

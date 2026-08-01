@@ -368,7 +368,7 @@ export interface CapCutSubtitleSegmentPlan {
   phraseWords: PhraseWord[];
 }
 
-/** Builds strictly non-overlapping subtitle segment timings (one visible text clip at a time). */
+/** Builds strictly non-overlapping subtitle segment timings aligned to transcript word starts. */
 export function buildCapCutSubtitleSegmentPlans(
   transcript: TranscriptData,
   preset: SubtitleStylePreset,
@@ -379,17 +379,13 @@ export function buildCapCutSubtitleSegmentPlans(
   }
 
   const plans: CapCutSubtitleSegmentPlan[] = [];
-  let chainEndMicros = 0;
 
   for (let index = 0; index < transcript.length; index += 1) {
     const entry = transcript[index];
-    const wordStartMicros = toMicroseconds(entry.start);
+    const startMicros = toMicroseconds(entry.start);
     const wordEndMicros = toMicroseconds(entry.end);
 
-    const startMicros =
-      index === 0 ? wordStartMicros : Math.max(wordStartMicros, chainEndMicros);
-
-    let endMicros = Math.max(wordEndMicros, startMicros + MIN_SUBTITLE_SEGMENT_MICROS);
+    let endMicros = wordEndMicros;
     if (index < transcript.length - 1) {
       const nextStartMicros = toMicroseconds(transcript[index + 1].start);
       endMicros = Math.min(endMicros, nextStartMicros);
@@ -399,7 +395,6 @@ export function buildCapCutSubtitleSegmentPlans(
       endMicros = startMicros + MIN_SUBTITLE_SEGMENT_MICROS;
     }
 
-    chainEndMicros = endMicros;
     plans.push({
       wordIndex: index,
       startMicros,

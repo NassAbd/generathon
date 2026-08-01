@@ -10,13 +10,19 @@ import {
   type SubtitleStylePreset,
 } from "@/lib/capcut/presets";
 import {
-  CAPCUT_BACKGROUND_BLUR,
-  CAPCUT_BACKGROUND_BRIGHTNESS,
   CAPCUT_CANVAS_HEIGHT,
   CAPCUT_CANVAS_RATIO,
   CAPCUT_CANVAS_WIDTH,
-  computeBackgroundCoverScale,
-  needsBackgroundBlurLayer,
+  computeSpeakerTrackingLayout,
+  computeSplitScreenTrackingLayout,
+  mapNormalizedFaceCenterXToOffsetPercentX,
+  needsVerticalCropReframe,
+  normalizeSpeakerOffsetSegments,
+  SPLIT_SCREEN_DEFAULT_LEFT_CENTER_X,
+  SPLIT_SCREEN_DEFAULT_RIGHT_CENTER_X,
+  type SpeakerOffsetSegment,
+  type SpeakerTrackingLayout,
+  type SplitScreenHalfLayout,
 } from "@/lib/capcut/video-effects";
 import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
@@ -37,6 +43,10 @@ export interface CapCutExportInput {
   sourceVideoWidth?: number;
   /** Source pixel height; defaults to 1920 (vertical-first). */
   sourceVideoHeight?: number;
+  /** Face-tracked horizontal pan (-50 … +50) for vertical crop reframing. */
+  speakerOffsetPercentX?: number;
+  /** Per-phrase/shot pan segments; splits the main video track when offsets differ. */
+  speakerOffsetSegments?: SpeakerOffsetSegment[];
 }
 
 export interface CapCutDraftBundle {
@@ -278,6 +288,263 @@ function logTextSegmentScaleSample(draft: CapCutDraftContent): void {
   });
 }
 
+/** CapCut rectangle mask metadata (capcut-cli enums.json). */
+const SPLIT_SCREEN_RECTANGLE_MASK = {
+  name: "Rectangle",
+  resource_id: "7374021450748924432",
+  resource_type: "rectangle",
+  default_aspect_ratio: 1.0,
+} as const;
+
+interface TimedVideoSegmentOptions {
+  sourceStartMicros?: number;
+  volume?: number;
+  renderIndex?: number;
+  /** Attach a native CapCut half-canvas crop mask via extra_material_refs. */
+  maskHalf?: "top" | "bottom";
+  /** Reuse a pre-registered mask material id (avoids duplicating identical masks). */
+  maskMaterialId?: string;
+}
+
+function createSplitScreenHalfMaskMaterial(half: "top" | "bottom", maskId?: string): DraftRecord {
+  const centerY = half === "top" ? 0.5 : -0.5;
+
+  return {
+    id: maskId ?? uuid(),
+    type: "mask",
+    name: SPLIT_SCREEN_RECTANGLE_MASK.name,
+    category: "video",
+    category_id: "",
+    category_name: "",
+    platform: "all",
+    position_info: "",
+    resource_type: SPLIT_SCREEN_RECTANGLE_MASK.resource_type,
+    resource_id: SPLIT_SCREEN_RECTANGLE_MASK.resource_id,
+    config: {
+      aspectRatio: SPLIT_SCREEN_RECTANGLE_MASK.default_aspect_ratio,
+      centerX: 0,
+      centerY,
+      feather: 0,
+      height: 0.5,
+      invert: false,
+      rotation: 0,
+      roundCorner: 0,
+      width: 1,
+    },
+  };
+}
+
+function registerSplitScreenHalfMask(materials: DraftRecord, half: "top" | "bottom"): string {
+  const mask = createSplitScreenHalfMaskMaterial(half);
+  pushMaterial(materials, "masks", mask);
+  return String(mask.id);
+}
+
+function applyInvisibleAudioCarrierLayout(videoSegment: DraftRecord): void {
+  const clip = videoSegment.clip as DraftRecord;
+  clip.alpha = 0;
+  clip.rotation = 0;
+  clip.scale = { x: 1, y: 1 };
+  clip.transform = { x: 0, y: 0 };
+  clip.flip = { horizontal: false, vertical: false };
+  videoSegment.volume = 1;
+  videoSegment.visible = true;
+  videoSegment.uniform_scale = { on: true, value: 1 };
+}
+
+function applyMainVideoClipLayout(
+  videoSegment: DraftRecord,
+  layout: SpeakerTrackingLayout,
+): void {
+  const mainVideoClip = videoSegment.clip as DraftRecord;
+  mainVideoClip.alpha = 1;
+  mainVideoClip.transform = {
+    x: layout.capcutTransformX,
+    y: 0,
+  };
+  mainVideoClip.scale = {
+    x: layout.coverScale,
+    y: layout.coverScale,
+  };
+  videoSegment.volume = 1;
+  videoSegment.uniform_scale = { on: true, value: layout.coverScale };
+}
+
+function applySplitScreenHalfClipLayout(
+  videoSegment: DraftRecord,
+  halfLayout: SplitScreenHalfLayout,
+): void {
+  const clip = videoSegment.clip as DraftRecord;
+  clip.alpha = 1;
+  clip.transform = {
+    x: halfLayout.capcutTransformX,
+    y: halfLayout.capcutTransformY,
+  };
+  clip.scale = {
+    x: halfLayout.coverScale,
+    y: halfLayout.coverScale,
+  };
+  videoSegment.volume = 0;
+  videoSegment.uniform_scale = { on: true, value: halfLayout.coverScale };
+}
+
+function appendTimedVideoSegment(
+  videoTrack: DraftRecord,
+  materials: DraftRecord,
+  videoMaterialId: string,
+  startMicros: number,
+  segmentDurationMicros: number,
+  applyLayout: (segment: DraftRecord) => void,
+  options: TimedVideoSegmentOptions = {},
+): void {
+  const sourceStartMicros = options.sourceStartMicros ?? startMicros;
+  const renderIndex = options.renderIndex ?? 14000;
+
+  const videoCompanions = createCompanionMaterials("video");
+  registerCompanions(materials, videoCompanions);
+
+  const companionIds = [...videoCompanions.ids];
+  if (options.maskHalf !== undefined || options.maskMaterialId !== undefined) {
+    const maskId =
+      options.maskMaterialId ??
+      (options.maskHalf !== undefined ? registerSplitScreenHalfMask(materials, options.maskHalf) : undefined);
+    if (maskId) {
+      companionIds.push(maskId);
+    }
+  }
+
+  const videoSegment = baseSegment(
+    uuid(),
+    videoMaterialId,
+    String(videoTrack.id),
+    { start: startMicros, duration: segmentDurationMicros },
+    companionIds,
+    renderIndex,
+  );
+  videoSegment.target_timerange = { start: startMicros, duration: segmentDurationMicros };
+  videoSegment.source_timerange = { start: sourceStartMicros, duration: segmentDurationMicros };
+  if (options.volume !== undefined) {
+    videoSegment.volume = options.volume;
+  }
+  applyLayout(videoSegment);
+  (videoTrack.segments as DraftRecord[]).push(videoSegment);
+}
+
+function appendMainVideoSegments(
+  mainVideoTrack: DraftRecord,
+  splitTopTrack: DraftRecord,
+  splitBottomTrack: DraftRecord,
+  materials: DraftRecord,
+  videoMaterialId: string,
+  sourceVideoWidth: number,
+  sourceVideoHeight: number,
+  durationSeconds: number,
+  durationMicros: number,
+  speakerOffsetSegments: SpeakerOffsetSegment[] | undefined,
+  legacySpeakerOffsetPercentX: number | undefined,
+): SpeakerTrackingLayout {
+  const normalizedSegments = normalizeSpeakerOffsetSegments(speakerOffsetSegments ?? [], durationSeconds);
+  const needsReframe = needsVerticalCropReframe(sourceVideoWidth, sourceVideoHeight);
+
+  if (!needsReframe || normalizedSegments.length === 0) {
+    const layout = computeSpeakerTrackingLayout(
+      sourceVideoWidth,
+      sourceVideoHeight,
+      legacySpeakerOffsetPercentX ?? 0,
+    );
+    appendTimedVideoSegment(
+      mainVideoTrack,
+      materials,
+      videoMaterialId,
+      0,
+      durationMicros,
+      (segment) => applyMainVideoClipLayout(segment, layout),
+    );
+    return layout;
+  }
+
+  let referenceLayout = computeSpeakerTrackingLayout(sourceVideoWidth, sourceVideoHeight, 0);
+  let splitTopMaskId: string | undefined;
+  let splitBottomMaskId: string | undefined;
+
+  for (const segment of normalizedSegments) {
+    const startMicros = toMicroseconds(segment.startSeconds);
+    const segmentDurationMicros = toMicroseconds(segment.endSeconds - segment.startSeconds);
+
+    if (segment.layoutType === "split-screen") {
+      const leftRaw =
+        segment.leftOffsetPercentX ??
+        mapNormalizedFaceCenterXToOffsetPercentX(SPLIT_SCREEN_DEFAULT_LEFT_CENTER_X);
+      const rightRaw =
+        segment.rightOffsetPercentX ??
+        mapNormalizedFaceCenterXToOffsetPercentX(SPLIT_SCREEN_DEFAULT_RIGHT_CENTER_X);
+      const splitLayout = computeSplitScreenTrackingLayout(
+        sourceVideoWidth,
+        sourceVideoHeight,
+        leftRaw,
+        rightRaw,
+      );
+
+      // Invisible carrier on main track keeps source audio locked to the master timeline.
+      appendTimedVideoSegment(
+        mainVideoTrack,
+        materials,
+        videoMaterialId,
+        startMicros,
+        segmentDurationMicros,
+        applyInvisibleAudioCarrierLayout,
+        { renderIndex: 14000 },
+      );
+      if (!splitTopMaskId) {
+        splitTopMaskId = registerSplitScreenHalfMask(materials, "top");
+      }
+      if (!splitBottomMaskId) {
+        splitBottomMaskId = registerSplitScreenHalfMask(materials, "bottom");
+      }
+
+      // Top half — left speaker with native 0–50% vertical mask.
+      appendTimedVideoSegment(
+        splitTopTrack,
+        materials,
+        videoMaterialId,
+        startMicros,
+        segmentDurationMicros,
+        (videoSegment) => applySplitScreenHalfClipLayout(videoSegment, splitLayout.topHalf),
+        { volume: 0, renderIndex: 14100, maskMaterialId: splitTopMaskId },
+      );
+      // Bottom half — right speaker with native 50–100% vertical mask.
+      appendTimedVideoSegment(
+        splitBottomTrack,
+        materials,
+        videoMaterialId,
+        startMicros,
+        segmentDurationMicros,
+        (videoSegment) => applySplitScreenHalfClipLayout(videoSegment, splitLayout.bottomHalf),
+        { volume: 0, renderIndex: 14050, maskMaterialId: splitBottomMaskId },
+      );
+      continue;
+    }
+
+    const layout = computeSpeakerTrackingLayout(
+      sourceVideoWidth,
+      sourceVideoHeight,
+      segment.offsetPercentX,
+    );
+    referenceLayout = layout;
+
+    appendTimedVideoSegment(
+      mainVideoTrack,
+      materials,
+      videoMaterialId,
+      startMicros,
+      segmentDurationMicros,
+      (videoSegment) => applyMainVideoClipLayout(videoSegment, layout),
+    );
+  }
+
+  return referenceLayout;
+}
+
 function defaultCrop(): DraftRecord {
   return {
     lower_left_x: 0,
@@ -390,6 +657,11 @@ function appendAudioSegment(
     audioCompanions.ids,
     options.renderIndex,
   );
+  audioSegment.target_timerange = {
+    start: options.startMicros,
+    duration: options.durationMicros,
+  };
+  audioSegment.source_timerange = { start: 0, duration: options.durationMicros };
   audioSegment.clip = null;
   audioSegment.volume = options.volume;
   (audioTrack.segments as DraftRecord[]).push(audioSegment);
@@ -811,12 +1083,10 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
   const materials = createEmptyMaterials();
   const sourceVideoWidth = input.sourceVideoWidth ?? 1080;
   const sourceVideoHeight = input.sourceVideoHeight ?? 1920;
-  const needsBackgroundBlur = needsBackgroundBlurLayer(sourceVideoWidth, sourceVideoHeight);
 
-  const backgroundVideoTrack = needsBackgroundBlur
-    ? createTrack("video", "Background Video")
-    : null;
   const videoTrack = createTrack("video", "Main Video");
+  const splitTopTrack = createTrack("video", "Split Top");
+  const splitBottomTrack = createTrack("video", "Split Bottom");
   const textTrack = createTrack("text", "Kinetic Subtitles");
   const sfxTrack = createTrack("audio", "SFX");
   const bgmTrack = createTrack("audio", "Background Music");
@@ -867,49 +1137,30 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     },
   });
 
-  if (backgroundVideoTrack) {
-    const backgroundCoverScale = computeBackgroundCoverScale(sourceVideoWidth, sourceVideoHeight);
-    const backgroundCompanions = createCompanionMaterials("video", {
-      canvasBlur: CAPCUT_BACKGROUND_BLUR,
-    });
-    registerCompanions(materials, backgroundCompanions);
-    const backgroundSegment = baseSegment(
-      uuid(),
-      videoMaterialId,
-      String(backgroundVideoTrack.id),
-      { start: 0, duration: durationMicros },
-      backgroundCompanions.ids,
-      13000,
-    );
-    const backgroundClip = backgroundSegment.clip as DraftRecord;
-    backgroundClip.scale = {
-      x: backgroundCoverScale,
-      y: backgroundCoverScale,
-    };
-    backgroundSegment.uniform_scale = {
-      on: true,
-      value: backgroundCoverScale,
-    };
-    backgroundClip.alpha = CAPCUT_BACKGROUND_BRIGHTNESS;
-    (backgroundVideoTrack.segments as DraftRecord[]).push(backgroundSegment);
-  }
-
-  const videoCompanions = createCompanionMaterials("video");
-  registerCompanions(materials, videoCompanions);
-  const videoSegment = baseSegment(
-    uuid(),
+  const speakerLayout = appendMainVideoSegments(
+    videoTrack,
+    splitTopTrack,
+    splitBottomTrack,
+    materials,
     videoMaterialId,
-    String(videoTrack.id),
-    { start: 0, duration: durationMicros },
-    videoCompanions.ids,
-    14000,
+    sourceVideoWidth,
+    sourceVideoHeight,
+    input.durationSeconds,
+    durationMicros,
+    input.speakerOffsetSegments,
+    input.speakerOffsetPercentX,
   );
 
-  (videoTrack.segments as DraftRecord[]).push(videoSegment);
-  const mainVideoClip = videoSegment.clip as DraftRecord;
-  mainVideoClip.transform = { x: 0, y: 0 };
-  mainVideoClip.scale = { x: 1, y: 1 };
-  videoSegment.uniform_scale = { on: true, value: 1 };
+  const videoTracks: DraftRecord[] = [];
+  if ((splitBottomTrack.segments as DraftRecord[]).length > 0) {
+    videoTracks.push(splitBottomTrack);
+  }
+  if ((splitTopTrack.segments as DraftRecord[]).length > 0) {
+    videoTracks.push(splitTopTrack);
+  }
+  if ((videoTrack.segments as DraftRecord[]).length > 0) {
+    videoTracks.push(videoTrack);
+  }
 
   const subtitlePreset = getSubtitlePreset(input.theme);
   const subtitleSegmentPlans = buildCapCutSubtitleSegmentPlans(
@@ -940,6 +1191,8 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       textCompanions.ids,
       15000,
     );
+    textSegment.target_timerange = { start: startMicros, duration };
+    textSegment.source_timerange = { start: 0, duration };
     applyTextSegmentLayout(textSegment, subtitlePreset);
     (textTrack.segments as DraftRecord[]).push(textSegment);
 
@@ -986,13 +1239,7 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       app_version: "9.0.0",
       os: "mac",
     },
-    tracks: [
-      ...(backgroundVideoTrack ? [backgroundVideoTrack] : []),
-      videoTrack,
-      textTrack,
-      sfxTrack,
-      bgmTrack,
-    ],
+    tracks: [...videoTracks, textTrack, sfxTrack, bgmTrack],
     materials,
     extra_info: {
       created_via: "motion-decorator",
@@ -1019,8 +1266,8 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     "5. Reopen CapCut and relink any missing media if prompted.",
     "",
     "Timeline units: microseconds (1 second = 1,000,000).",
-    needsBackgroundBlur
-      ? "Timeline tracks: Background Video (blur), Main Video (contain), Kinetic Subtitles, SFX, Background Music."
+    speakerLayout.needsReframe
+      ? "Timeline tracks: Main Video, Split Top/Bottom (wide shots), Kinetic Subtitles, SFX, Background Music."
       : "Timeline tracks: Main Video, Kinetic Subtitles, SFX, Background Music.",
     "Audio mix: BGM ~12%, keyword SFX ~80%.",
     "Canvas: 1080 x 1920 (9:16).",
@@ -1038,6 +1285,8 @@ export interface CapCutProjectData {
   theme: ThemeId;
   sourceVideoWidth?: number;
   sourceVideoHeight?: number;
+  speakerOffsetPercentX?: number;
+  speakerOffsetSegments?: SpeakerOffsetSegment[];
 }
 
 export interface CapCutDirectWriteResult {
@@ -1556,6 +1805,8 @@ export async function writeDirectToCapCut(
     theme: projectData.theme,
     sourceVideoWidth: projectData.sourceVideoWidth,
     sourceVideoHeight: projectData.sourceVideoHeight,
+    speakerOffsetPercentX: projectData.speakerOffsetPercentX,
+    speakerOffsetSegments: projectData.speakerOffsetSegments,
   });
   logTextSegmentScaleSample(draftContent);
 
