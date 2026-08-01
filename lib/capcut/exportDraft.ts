@@ -2,7 +2,6 @@ import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
-  buildCapCutSfxSegmentPlans,
   buildCapCutSubtitleSegmentPlans,
   CAPCUT_EXPORT_AUDIO,
   getCapCutTextMaterialProps,
@@ -547,19 +546,6 @@ function collectMediaDownloadItems(projectData: CapCutProjectData): MediaDownloa
 
   addItem(projectData.videoUrl, "video", true);
   addItem(CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL, "audio");
-  addItem(CAPCUT_EXPORT_AUDIO.SFX_WHOOSH_URL, "audio");
-  addItem(CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL, "audio");
-  addItem(CAPCUT_EXPORT_AUDIO.SFX_FAH_URL, "audio");
-
-  const sfxPlans = buildCapCutSfxSegmentPlans(
-    projectData.transcript,
-    projectData.speakerOffsetSegments,
-    (seconds) => Math.max(0, Math.round(seconds * 1_000_000)),
-  );
-
-  for (const plan of sfxPlans) {
-    addItem(plan.url, "audio");
-  }
 
   return items;
 }
@@ -1044,28 +1030,7 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     (textTrack.segments as DraftRecord[]).push(textSegment);
   }
 
-  const sfxSegmentPlans = buildCapCutSfxSegmentPlans(
-    input.transcript,
-    input.speakerOffsetSegments,
-    toMicroseconds,
-  );
-
-  for (const sfxPlan of sfxSegmentPlans) {
-    appendAudioSegment(materials, sfxTrack, {
-      url: sfxPlan.url,
-      startMicros: sfxPlan.startMicros,
-      durationMicros: CAPCUT_EXPORT_AUDIO.sfxClipDurationMicros,
-      materialDurationMicros: CAPCUT_EXPORT_AUDIO.sfxClipDurationMicros,
-      volume: CAPCUT_EXPORT_AUDIO.sfxVolume,
-      renderIndex: 11000,
-      filenameFallback:
-        sfxPlan.kind === "hook" || sfxPlan.kind === "keyword-strong"
-          ? "shocking.mp3"
-          : sfxPlan.kind === "shot-cut"
-            ? "whoosh.mp3"
-            : "fah.mp3",
-    });
-  }
+  // SFX track intentionally left empty — export focuses on framing + subtitles.
 
   appendAudioSegment(materials, bgmTrack, {
     url: CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL,
@@ -1123,11 +1088,11 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     "5. Reopen CapCut and relink any missing media if prompted.",
     "",
     "Timeline units: microseconds (1 second = 1,000,000).",
-    "Timeline tracks: Main Video, Kinetic Subtitles, SFX, Background Music.",
+    "Timeline tracks: Main Video, Kinetic Subtitles, Background Music (SFX disabled).",
     speakerLayout.needsReframe
       ? "Video framing: single-track 9:16 crop; wide/split shots export centered (offset 0%)."
       : "Video framing: single-track, native aspect.",
-    "Audio mix: BGM ~12%, keyword SFX ~80%.",
+    "Audio mix: BGM ~12%. Keyword SFX generation is disabled.",
     "Canvas: 1080 x 1920 (9:16).",
   ].join("\n");
 

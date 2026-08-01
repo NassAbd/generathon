@@ -3,7 +3,6 @@ import {
   buildSpeakerOffsetSegmentRanges,
   createDefaultSpeakerOffsetSegment,
   mapNormalizedFaceCenterXToOffsetPercentX,
-  MAX_SINGLE_SPEAKER_OFFSET_PERCENT,
   normalizeSpeakerOffsetSegments,
   SPLIT_SCREEN_DEFAULT_LEFT_CENTER_X,
   SPLIT_SCREEN_DEFAULT_RIGHT_CENTER_X,
@@ -36,11 +35,42 @@ const SPLIT_OFFSET_MERGE_THRESHOLD = 5;
 /** Middle segments shorter than this (seconds) may be absorbed into surrounding layout. */
 const LAYOUT_JITTER_MAX_DURATION_SECONDS = 2;
 
-/** Minimum raw offset delta (%) before reframing within the same continuous shot. */
-const CONTINUOUS_OFFSET_HOLD_THRESHOLD = 15;
+/**
+ * Minimum raw offset delta (%) before reframing within the same continuous shot.
+ * Below this, the previous shot anchor is locked (gimbal hold).
+ */
+const CONTINUOUS_OFFSET_HOLD_THRESHOLD = 20;
 
-/** Extra margin around the detected face box when computing pan (fraction of frame width). */
-const FACE_HEAD_MARGIN_FRACTION = 0.1;
+/** Heavy low-pass EMA across raw detections (lower = heavier gimbal). */
+const EMA_ALPHA = 0.08;
+
+/** Intra-segment frame samples for per-shot EMA smoothing. */
+const INTRA_SEGMENT_SAMPLE_COUNT = 3;
+
+/** Expand face width to include shoulders / upper torso for framing. */
+const SHOULDER_PADDING_MULTIPLIER = 1.8;
+
+/**
+ * 30% center deadzone: subject may roam ±15% of frame width with ZERO camera move.
+ * Measured as normalized frame units (0–1).
+ */
+export const CENTER_DEADZONE_HALF = 0.15;
+
+/** Playback pan clamp after deadzone / trajectory smoothing. */
+export const LIVE_FOLLOW_MAX_OFFSET_PERCENT = 35;
+
+/** Soft blend window (seconds) across keyframe boundaries. */
+export const KEYFRAME_BLEND_SECONDS = 0.55;
+
+/** Critically-damped gimbal spring toward precomputed keyframe targets. */
+export const GIMBAL_STIFFNESS = 1.8;
+export const GIMBAL_DAMPING = 0.9;
+export const GIMBAL_MAX_SPEED = 12;
+
+/** @deprecated Live 120ms sampling removed — use precomputed keyframes. */
+export const LIVE_FOLLOW_DETECT_INTERVAL_MS = 0;
+/** @deprecated Prefer stepGimbalPanTowardTarget. */
+export const LIVE_FOLLOW_LERP_ALPHA = 0.08;
 
 export type SpeakerDetectionSource = "face" | "subject-fallback" | "none";
 
@@ -638,7 +668,80 @@ function detectWideDualSubjectLayout(
   };
 }
 
-async function detectSegmentLayout(
+function applyEma(previous: number | null, next: number, alpha = EMA_ALPHA): number {
+  if (previous === null) {
+    return next;
+  }
+
+  return alpha * next + (1 - alpha) * previous;
+}
+
+function buildIntraSegmentSampleTimes(startSeconds: number, endSeconds: number): number[] {
+  const duration = Math.max(0, endSeconds - startSeconds);
+  if (duration <= 0.08) {
+    return [startSeconds + duration * 0.5];
+  }
+
+  const times: number[] = [];
+  for (let index = 0; index < INTRA_SEGMENT_SAMPLE_COUNT; index += 1) {
+    const fraction = (index + 1) / (INTRA_SEGMENT_SAMPLE_COUNT + 1);
+    times.push(startSeconds + duration * fraction);
+  }
+
+  return times;
+}
+
+function clampFollowOffsetPercentX(offsetPercentX: number): number {
+  return Math.max(
+    -LIVE_FOLLOW_MAX_OFFSET_PERCENT,
+    Math.min(LIVE_FOLLOW_MAX_OFFSET_PERCENT, offsetPercentX),
+  );
+}
+
+/**
+ * Maps a normalized subject center (0–1) through the 30% deadzone.
+ * Inside ±15% of frame center → 0 pan. Outside → soft excess pan.
+ */
+export function mapSubjectCenterThroughDeadzone(normalizedCenterX: number): number {
+  const clampedCenter = Math.max(0, Math.min(1, normalizedCenterX));
+  const deltaFromCenter = 0.5 - clampedCenter;
+
+  if (Math.abs(deltaFromCenter) <= CENTER_DEADZONE_HALF) {
+    return 0;
+  }
+
+  const excess =
+    Math.sign(deltaFromCenter) * (Math.abs(deltaFromCenter) - CENTER_DEADZONE_HALF);
+  // Rescale remaining range so exits from the deadzone feel continuous.
+  const remapped = excess / (0.5 - CENTER_DEADZONE_HALF);
+  return clampFollowOffsetPercentX(remapped * LIVE_FOLLOW_MAX_OFFSET_PERCENT);
+}
+
+/**
+ * Eye-level / upper-third horizontal center of a face box, expanded to torso/shoulders.
+ * Applies the wide 30% center deadzone so micro-motion does not move the camera.
+ */
+function mapFaceBoxToCinematicOffset(
+  faceBox: { x: number; y: number; width: number; height: number },
+  frameWidth: number,
+): number {
+  if (frameWidth <= 0) {
+    return 0;
+  }
+
+  // Expand the face box horizontally to approximate shoulders / upper body.
+  const paddedWidth = faceBox.width * SHOULDER_PADDING_MULTIPLIER;
+  const paddedX = faceBox.x - (paddedWidth - faceBox.width) / 2;
+  const torsoCenterX = (paddedX + paddedWidth / 2) / frameWidth;
+
+  // Slight bias toward eye-line within the face box (upper third).
+  const eyeBiasX = (faceBox.x + faceBox.width / 2) / frameWidth;
+  const subjectCenterX = torsoCenterX * 0.65 + eyeBiasX * 0.35;
+
+  return mapSubjectCenterThroughDeadzone(subjectCenterX);
+}
+
+async function detectFrameLayout(
   faceapi: FaceApiModule,
   video: HTMLVideoElement,
   sampleTime: number,
@@ -651,7 +754,6 @@ async function detectSegmentLayout(
 
   const dualFaceLayout = detectWideDualFaceLayout(detections, frameWidth);
   if (dualFaceLayout !== null) {
-    console.info("[FaceTracker] Wide shot → split-screen layout");
     return {
       layoutType: "split-screen",
       offsetPercentX: 0,
@@ -661,19 +763,14 @@ async function detectSegmentLayout(
   }
 
   if (detections.length === 1 && frameWidth > 0) {
-    const faceBox = detections[0].box;
-    const normalizedCenterX = (faceBox.x + faceBox.width / 2) / frameWidth;
-    const normalizedFaceWidth = faceBox.width / frameWidth;
-
     return {
       layoutType: "single",
-      offsetPercentX: mapFaceDetectionToSpeakerOffset(normalizedCenterX, normalizedFaceWidth),
+      offsetPercentX: mapFaceBoxToCinematicOffset(detections[0].box, frameWidth),
     };
   }
 
   const dualSubjectLayout = detectWideDualSubjectLayout(frameCanvas);
   if (dualSubjectLayout !== null) {
-    console.info("[FaceTracker] Wide shot (subject heuristic) → split-screen layout");
     return {
       layoutType: "split-screen",
       offsetPercentX: 0,
@@ -688,43 +785,56 @@ async function detectSegmentLayout(
   };
 }
 
-function clampRawSpeakerOffset(offsetPercentX: number): number {
-  return Math.max(
-    -MAX_SINGLE_SPEAKER_OFFSET_PERCENT,
-    Math.min(MAX_SINGLE_SPEAKER_OFFSET_PERCENT, offsetPercentX),
-  );
+/**
+ * Multi-frame sample + EMA within a segment for butter-smooth gimbal framing.
+ */
+async function detectSegmentLayout(
+  faceapi: FaceApiModule,
+  video: HTMLVideoElement,
+  startSeconds: number,
+  endSeconds: number,
+): Promise<SegmentLayoutDetection> {
+  const sampleTimes = buildIntraSegmentSampleTimes(startSeconds, endSeconds);
+
+  let emaSingleOffset: number | null = null;
+  let emaLeftOffset: number | null = null;
+  let emaRightOffset: number | null = null;
+  let singleVotes = 0;
+  let splitVotes = 0;
+
+  for (const sampleTime of sampleTimes) {
+    const layout = await detectFrameLayout(faceapi, video, sampleTime);
+
+    if (layout.layoutType === "split-screen") {
+      splitVotes += 1;
+      emaLeftOffset = applyEma(emaLeftOffset, layout.leftOffsetPercentX ?? 0);
+      emaRightOffset = applyEma(emaRightOffset, layout.rightOffsetPercentX ?? 0);
+      continue;
+    }
+
+    singleVotes += 1;
+    emaSingleOffset = applyEma(emaSingleOffset, layout.offsetPercentX);
+  }
+
+  if (splitVotes > singleVotes && emaLeftOffset !== null && emaRightOffset !== null) {
+    console.info("[FaceTracker] Wide shot → split-screen layout (EMA)");
+    return {
+      layoutType: "split-screen",
+      offsetPercentX: 0,
+      leftOffsetPercentX: emaLeftOffset,
+      rightOffsetPercentX: emaRightOffset,
+    };
+  }
+
+  return {
+    layoutType: "single",
+    offsetPercentX: emaSingleOffset ?? 0,
+  };
 }
 
 /**
- * Maps a detected face box to a conservative pan offset with headroom.
- * Keeps ears/head edges inside the 9:16 crop by attenuating aggressive pans.
+ * Per-shot anchor lock: hold previous framing unless face moves >20% or layout changes.
  */
-function mapFaceDetectionToSpeakerOffset(
-  normalizedCenterX: number,
-  normalizedFaceWidth: number,
-): number {
-  const clampedCenter = Math.max(0, Math.min(1, normalizedCenterX));
-  const clampedWidth = Math.max(0.05, Math.min(0.65, normalizedFaceWidth));
-
-  const centerDeadZone = 0.08 + clampedWidth * 0.12;
-  if (Math.abs(clampedCenter - 0.5) <= centerDeadZone) {
-    return 0;
-  }
-
-  let rawOffset = mapNormalizedFaceCenterXToOffsetPercentX(clampedCenter);
-
-  const edgeMargin = clampedWidth / 2 + FACE_HEAD_MARGIN_FRACTION;
-  const nearLeftEdge = clampedCenter < edgeMargin;
-  const nearRightEdge = clampedCenter > 1 - edgeMargin;
-  if (nearLeftEdge || nearRightEdge) {
-    rawOffset *= 0.72;
-  } else {
-    rawOffset *= 0.86;
-  }
-
-  return clampRawSpeakerOffset(rawOffset);
-}
-
 function stabilizeContinuousOffsets(segments: SpeakerOffsetSegment[]): SpeakerOffsetSegment[] {
   if (segments.length <= 1) {
     return segments;
@@ -766,6 +876,45 @@ function stabilizeContinuousOffsets(segments: SpeakerOffsetSegment[]): SpeakerOf
   }
 
   return stabilized;
+}
+
+/** Cross-segment EMA pass before anchor locking — gimbal smoothing between phrase samples. */
+function applyCrossSegmentEma(segments: SpeakerOffsetSegment[]): SpeakerOffsetSegment[] {
+  if (segments.length <= 1) {
+    return segments;
+  }
+
+  let emaSingle: number | null = null;
+  let emaLeft: number | null = null;
+  let emaRight: number | null = null;
+  let previousLayout: ShotLayoutType | null = null;
+
+  return segments.map((segment) => {
+    if (previousLayout !== null && previousLayout !== segment.layoutType) {
+      emaSingle = null;
+      emaLeft = null;
+      emaRight = null;
+    }
+
+    previousLayout = segment.layoutType;
+
+    if (segment.layoutType === "split-screen") {
+      emaLeft = applyEma(emaLeft, resolveSplitLeftOffset(segment));
+      emaRight = applyEma(emaRight, resolveSplitRightOffset(segment));
+      return {
+        ...segment,
+        offsetPercentX: 0,
+        leftOffsetPercentX: emaLeft,
+        rightOffsetPercentX: emaRight,
+      };
+    }
+
+    emaSingle = applyEma(emaSingle, segment.offsetPercentX);
+    return {
+      ...segment,
+      offsetPercentX: emaSingle,
+    };
+  });
 }
 
 function segmentDurationSeconds(segment: SpeakerOffsetSegment): number {
@@ -1025,16 +1174,62 @@ export function smoothLayoutJitter(segments: SpeakerOffsetSegment[]): SpeakerOff
  * 2. Absorb brief layout jitter.
  * 3. Merge again after jitter cleanup.
  */
+/**
+ * 5-tap Gaussian low-pass over single-speaker keyframe offsets.
+ * Kills zigzag between neighboring phrase samples before playback.
+ */
+export function applyGaussianTrajectorySmoothing(
+  segments: SpeakerOffsetSegment[],
+): SpeakerOffsetSegment[] {
+  if (segments.length <= 1) {
+    return segments;
+  }
+
+  const kernel = [1, 4, 6, 4, 1] as const;
+  const kernelRadius = 2;
+  const rawOffsets = segments.map((segment) =>
+    segment.layoutType === "single" ? segment.offsetPercentX : 0,
+  );
+
+  return segments.map((segment, index) => {
+    if (segment.layoutType !== "single") {
+      return segment;
+    }
+
+    let weightedSum = 0;
+    let weightTotal = 0;
+
+    for (let tap = -kernelRadius; tap <= kernelRadius; tap += 1) {
+      const sampleIndex = Math.max(0, Math.min(rawOffsets.length - 1, index + tap));
+      const weight = kernel[tap + kernelRadius];
+      weightedSum += rawOffsets[sampleIndex] * weight;
+      weightTotal += weight;
+    }
+
+    const smoothed = weightTotal > 0 ? weightedSum / weightTotal : segment.offsetPercentX;
+    return {
+      ...segment,
+      offsetPercentX: clampFollowOffsetPercentX(smoothed),
+    };
+  });
+}
+
 export function mergeSpeakerOffsetSegments(segments: SpeakerOffsetSegment[]): SpeakerOffsetSegment[] {
   if (segments.length <= 1) {
     return segments;
   }
 
   const rawCount = segments.length;
-  const afterOffsetStabilization = stabilizeContinuousOffsets(segments);
+  // 1) Heavy cross-segment EMA
+  // 2) Per-shot anchor lock (hold unless >20% move / camera cut)
+  // 3) Merge similar neighbors + absorb brief layout jitter
+  // 4) Gaussian trajectory smoothing for cinematic keyframes
+  const afterEma = applyCrossSegmentEma(segments);
+  const afterOffsetStabilization = stabilizeContinuousOffsets(afterEma);
   const afterSimilarityMerge = mergeSimilarContinuousSegments(afterOffsetStabilization);
   const afterJitterSmooth = smoothLayoutJitter(afterSimilarityMerge);
-  const mergedSegments = mergeSimilarContinuousSegments(afterJitterSmooth);
+  const afterMerge = mergeSimilarContinuousSegments(afterJitterSmooth);
+  const mergedSegments = applyGaussianTrajectorySmoothing(afterMerge);
 
   if (mergedSegments.length < rawCount) {
     console.info(
@@ -1157,11 +1352,13 @@ export async function detectSpeakerOffsetSegments(
     }
 
     for (const range of segmentRanges) {
-      const sampleTime =
-        range.startSeconds + Math.max(0.05, (range.endSeconds - range.startSeconds) * 0.35);
-
       try {
-        const layout = await detectSegmentLayout(faceapi, video, sampleTime);
+        const layout = await detectSegmentLayout(
+          faceapi,
+          video,
+          range.startSeconds,
+          range.endSeconds,
+        );
         segments.push({
           startSeconds: range.startSeconds,
           endSeconds: range.endSeconds,
@@ -1195,6 +1392,166 @@ export async function detectSpeakerOffsetSegments(
 
   const mergedSegments = mergeSpeakerOffsetSegments(segments);
   return buildSpeakerOffsetDetectionResult(mergedSegments, durationSeconds);
+}
+
+export function clampLiveFollowOffsetPercentX(offsetPercentX: number): number {
+  return clampFollowOffsetPercentX(offsetPercentX);
+}
+
+/**
+ * Maps face X-center (0–1) through the 30% deadzone for cinematic framing.
+ * Face on RIGHT → negative (pan left); face on LEFT → positive.
+ */
+export function mapFaceCenterToLiveFollowOffset(normalizedCenterX: number): number {
+  return mapSubjectCenterThroughDeadzone(normalizedCenterX);
+}
+
+/** @deprecated Prefer stepGimbalPanTowardTarget for cinematic easing. */
+export function lerpLiveFollowOffset(
+  currentOffsetPercentX: number,
+  targetOffsetPercentX: number,
+  alpha: number = LIVE_FOLLOW_LERP_ALPHA,
+): number {
+  const blended = currentOffsetPercentX + (targetOffsetPercentX - currentOffsetPercentX) * alpha;
+  return clampFollowOffsetPercentX(blended);
+}
+
+export interface GimbalPanState {
+  position: number;
+  velocity: number;
+}
+
+/**
+ * Heavy cinematic gimbal step: slow acceleration, gentle deceleration toward a
+ * precomputed keyframe target. Call once per animation frame with dt in seconds.
+ */
+export function stepGimbalPanTowardTarget(
+  state: GimbalPanState,
+  targetOffsetPercentX: number,
+  dtSeconds: number,
+): GimbalPanState {
+  const dt = Math.max(0, Math.min(0.05, dtSeconds));
+  const error = targetOffsetPercentX - state.position;
+
+  if (Math.abs(error) < 0.12 && Math.abs(state.velocity) < 0.25) {
+    return { position: targetOffsetPercentX, velocity: 0 };
+  }
+
+  const acceleration = error * GIMBAL_STIFFNESS;
+  const dampingFactor = Math.pow(GIMBAL_DAMPING, dt * 60);
+  let nextVelocity = (state.velocity + acceleration * dt) * dampingFactor;
+  nextVelocity = Math.max(-GIMBAL_MAX_SPEED, Math.min(GIMBAL_MAX_SPEED, nextVelocity));
+
+  const nextPosition = clampFollowOffsetPercentX(state.position + nextVelocity * dt);
+  return { position: nextPosition, velocity: nextVelocity };
+}
+
+/**
+ * Resolves a pre-smoothed pan keyframe at `timeSeconds`, with soft blending
+ * across segment boundaries so cuts never produce zigzag jumps.
+ */
+export function resolveTrajectoryOffsetAtTime(
+  segments: SpeakerOffsetSegment[],
+  timeSeconds: number,
+): number {
+  if (segments.length === 0 || !Number.isFinite(timeSeconds)) {
+    return 0;
+  }
+
+  const sorted = [...segments].sort((left, right) => left.startSeconds - right.startSeconds);
+  let activeIndex = sorted.findIndex(
+    (segment) => timeSeconds >= segment.startSeconds && timeSeconds < segment.endSeconds,
+  );
+
+  if (activeIndex < 0) {
+    activeIndex = timeSeconds < sorted[0].startSeconds ? 0 : sorted.length - 1;
+  }
+
+  const active = sorted[activeIndex];
+  const activeOffset =
+    active.layoutType === "single" ? clampFollowOffsetPercentX(active.offsetPercentX) : 0;
+
+  if (activeIndex >= sorted.length - 1 || KEYFRAME_BLEND_SECONDS <= 0) {
+    return activeOffset;
+  }
+
+  const next = sorted[activeIndex + 1];
+  const nextOffset =
+    next.layoutType === "single" ? clampFollowOffsetPercentX(next.offsetPercentX) : 0;
+  const blendStart = Math.max(active.startSeconds, active.endSeconds - KEYFRAME_BLEND_SECONDS);
+
+  if (timeSeconds < blendStart) {
+    return activeOffset;
+  }
+
+  const blendProgress = Math.min(
+    1,
+    Math.max(0, (timeSeconds - blendStart) / KEYFRAME_BLEND_SECONDS),
+  );
+  // Smoothstep ease — no linear zigzag across the cut.
+  const eased = blendProgress * blendProgress * (3 - 2 * blendProgress);
+  return clampFollowOffsetPercentX(activeOffset + (nextOffset - activeOffset) * eased);
+}
+
+/** Forces every segment to single-speaker layout for web playback / single-track export parity. */
+export function coerceSegmentsToSingleLayout(
+  segments: SpeakerOffsetSegment[],
+): SpeakerOffsetSegment[] {
+  return applyGaussianTrajectorySmoothing(
+    segments.map((segment) => ({
+      startSeconds: segment.startSeconds,
+      endSeconds: segment.endSeconds,
+      layoutType: "single" as const,
+      offsetPercentX:
+        segment.layoutType === "split-screen"
+          ? 0
+          : clampFollowOffsetPercentX(segment.offsetPercentX),
+    })),
+  );
+}
+
+/**
+ * @deprecated Prefer precomputed trajectory keyframes + stepGimbalPanTowardTarget.
+ * Kept as a no-noise fallback that still applies the deadzone when needed.
+ */
+export async function detectLiveFaceOffsetPercentX(
+  video: HTMLVideoElement,
+): Promise<number | null> {
+  if (!isBrowserEnvironment()) {
+    return null;
+  }
+
+  if (video.videoWidth <= 0 || video.videoHeight <= 0 || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+    return null;
+  }
+
+  try {
+    const faceapi = await ensureFaceModelsLoaded();
+    const frameCanvas = captureVideoFrameCanvas(video);
+    const detections = await detectFacesMultiScale(faceapi, frameCanvas);
+
+    if (detections.length === 0) {
+      return null;
+    }
+
+    const primaryFace = detections.reduce((largest, candidate) =>
+      candidate.box.area > largest.box.area ? candidate : largest,
+    );
+
+    const paddedWidth = primaryFace.box.width * SHOULDER_PADDING_MULTIPLIER;
+    const paddedX = primaryFace.box.x - (paddedWidth - primaryFace.box.width) / 2;
+    const torsoCenterX = (paddedX + paddedWidth / 2) / video.videoWidth;
+
+    return mapSubjectCenterThroughDeadzone(torsoCenterX);
+  } catch (error: unknown) {
+    if (isCanvasSecurityError(error)) {
+      logCanvasSecurityFallback(error);
+      return 0;
+    }
+
+    console.warn("[FaceTracker] Live face follow sample failed.", error);
+    return null;
+  }
 }
 
 /**

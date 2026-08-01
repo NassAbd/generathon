@@ -2,7 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import { collectCapCutSfxUrls, preloadBgmAudio } from "@/lib/player/preloadAssets";
+import { preloadBgmAudio } from "@/lib/player/preloadAssets";
 import {
   applyBgmVolume,
   pauseBgm,
@@ -10,14 +10,6 @@ import {
   syncBgmCurrentTime,
   syncBgmMutedState,
 } from "@/lib/player/bgmSync";
-import {
-  rebuildTriggeredKeywordSfx,
-  shouldResetHookSfx,
-  syncHookSfxAtTime,
-  syncKeywordSfxAtTime,
-  type SfxPlaybackEvent,
-} from "@/lib/player/keywordSfxSync";
-import { SfxManager } from "@/lib/player/sfxManager";
 import { findActiveWordIndex, normalizeTranscript } from "@/lib/player/transcriptIndex";
 import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
@@ -28,17 +20,10 @@ import {
   getSubtitlePreset,
   getWebSubtitleWordStyle,
   formatPhraseDisplayWord,
-  resolveSfxUrlForEvent,
 } from "@/lib/capcut/presets";
 import {
   computeSpeakerTrackingLayout,
-  computeSplitScreenTrackingLayout,
-  mapNormalizedFaceCenterXToOffsetPercentX,
   needsVerticalCropReframe,
-  resolveSpeakerSegmentAtTime,
-  SPLIT_SCREEN_DEFAULT_LEFT_CENTER_X,
-  SPLIT_SCREEN_DEFAULT_RIGHT_CENTER_X,
-  type ShotLayoutType,
   type SpeakerOffsetSegment,
 } from "@/lib/capcut/video-effects";
 
@@ -81,20 +66,6 @@ const DEFAULT_REFRAME = {
   coverScale: 1,
 };
 
-function segmentShotKey(segment: SpeakerOffsetSegment): string {
-  if (segment.layoutType === "split-screen") {
-    return [
-      segment.startSeconds,
-      segment.endSeconds,
-      "split",
-      segment.leftOffsetPercentX ?? 0,
-      segment.rightOffsetPercentX ?? 0,
-    ].join(":");
-  }
-
-  return [segment.startSeconds, segment.endSeconds, "single", segment.offsetPercentX].join(":");
-}
-
 export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlayerOverlayProps>(
   function VideoPlayerOverlay(
     {
@@ -111,36 +82,29 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
     ref,
   ) {
     const videoRef = useRef<HTMLVideoElement>(null);
-    const splitTopVideoRef = useRef<HTMLVideoElement>(null);
-    const splitBottomVideoRef = useRef<HTMLVideoElement>(null);
     const bgmRef = useRef<HTMLAudioElement>(null);
-    const sfxManagerRef = useRef(new SfxManager());
     const activeIndexRef = useRef(-1);
     const videoDimensionsRef = useRef<VideoSourceDimensions | null>(null);
     const faceDetectionStartedRef = useRef(false);
-    const triggeredKeywordSfxRef = useRef<Set<number>>(new Set());
-    const hookSfxTriggeredRef = useRef(false);
-    const shotCutSfxPrimedRef = useRef(false);
     const rafRef = useRef<number | null>(null);
+    const lastFrameTimeRef = useRef<number | null>(null);
+    const trajectorySegmentsRef = useRef<SpeakerOffsetSegment[]>([]);
+    const gimbalStateRef = useRef({ position: 0, velocity: 0 });
+    const publishedPanRef = useRef(0);
+    const needsReframeRef = useRef(false);
     const onActiveWordChangeRef = useRef(onActiveWordChange);
     const onVideoDimensionsChangeRef = useRef(onVideoDimensionsChange);
     const onSpeakerOffsetChangeRef = useRef(onSpeakerOffsetChange);
     const onSpeakerOffsetSegmentsChangeRef = useRef(onSpeakerOffsetSegmentsChange);
     const onTimeUpdateRef = useRef(onTimeUpdate);
-    const speakerSegmentsRef = useRef<SpeakerOffsetSegment[]>([]);
-    const activeSegmentKeyRef = useRef("");
-    const layoutModeRef = useRef<ShotLayoutType>("single");
 
     const normalizedTranscript = useMemo(() => normalizeTranscript(transcript), [transcript]);
     const subtitlePreset = getSubtitlePreset(theme);
 
     const [activeWordIndex, setActiveWordIndex] = useState(-1);
     const [reframeState, setReframeState] = useState(DEFAULT_REFRAME);
-    const [layoutMode, setLayoutMode] = useState<ShotLayoutType>("single");
-    layoutModeRef.current = layoutMode;
+    needsReframeRef.current = reframeState.needsReframe;
     const [activePanOffsetX, setActivePanOffsetX] = useState(0);
-    const [topPanOffsetX, setTopPanOffsetX] = useState(0);
-    const [bottomPanOffsetX, setBottomPanOffsetX] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
@@ -154,64 +118,30 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       if (bgm) {
         syncBgmMutedState(video, bgm);
       }
-      sfxManagerRef.current.setMuted(video.muted);
     }, []);
 
-    const triggerSfx = useCallback((event: SfxPlaybackEvent) => {
-      void sfxManagerRef.current.unlock().then(() => {
-        sfxManagerRef.current.play(event.url, event.slotKey);
-      });
+    const applyActiveIndex = useCallback((nextIndex: number) => {
+      if (nextIndex === activeIndexRef.current) return;
+
+      activeIndexRef.current = nextIndex;
+      setActiveWordIndex(nextIndex);
+      onActiveWordChangeRef.current?.(nextIndex);
     }, []);
-
-    const syncPlaybackAudio = useCallback(
-      (currentTime: number) => {
-        hookSfxTriggeredRef.current = syncHookSfxAtTime(
-          currentTime,
-          hookSfxTriggeredRef.current,
-          triggerSfx,
-        );
-        syncKeywordSfxAtTime(
-          normalizedTranscript,
-          currentTime,
-          triggeredKeywordSfxRef.current,
-          triggerSfx,
-        );
-      },
-      [normalizedTranscript, triggerSfx],
-    );
-
-    const applyActiveIndex = useCallback(
-      (nextIndex: number) => {
-        if (nextIndex === activeIndexRef.current) return;
-
-        activeIndexRef.current = nextIndex;
-        setActiveWordIndex(nextIndex);
-        onActiveWordChangeRef.current?.(nextIndex);
-      },
-      [],
-    );
 
     const syncToVideoTime = useCallback(
-      (currentTime: number) => {
-        syncPlaybackAudio(currentTime);
-        applyActiveIndex(findActiveWordIndex(normalizedTranscript, currentTime));
+      (timeSeconds: number) => {
+        applyActiveIndex(findActiveWordIndex(normalizedTranscript, timeSeconds));
       },
-      [applyActiveIndex, normalizedTranscript, syncPlaybackAudio],
+      [applyActiveIndex, normalizedTranscript],
     );
 
-    const resetAudioForSeek = useCallback((seconds: number) => {
-      sfxManagerRef.current.reset();
-      triggeredKeywordSfxRef.current = rebuildTriggeredKeywordSfx(normalizedTranscript, seconds);
-      if (shouldResetHookSfx(seconds)) {
-        hookSfxTriggeredRef.current = false;
-      }
-
+    const resetAudioForSeek = useCallback((_seconds: number) => {
       const video = videoRef.current;
       const bgm = bgmRef.current;
       if (video && bgm) {
         syncBgmCurrentTime(video, bgm);
       }
-    }, [normalizedTranscript]);
+    }, []);
 
     const applyReframeBase = useCallback((width: number, height: number) => {
       const layout = computeSpeakerTrackingLayout(width, height, 0);
@@ -221,38 +151,11 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       });
     }, []);
 
-    const syncSplitMirrorVideos = useCallback((masterVideo: HTMLVideoElement) => {
-      const topVideo = splitTopVideoRef.current;
-      const bottomVideo = splitBottomVideoRef.current;
-      if (!topVideo || !bottomVideo) {
-        return;
-      }
-
-      const masterTime = masterVideo.currentTime;
-
-      if (Math.abs(topVideo.currentTime - masterTime) > 0.05) {
-        topVideo.currentTime = masterTime;
-      }
-      if (Math.abs(bottomVideo.currentTime - masterTime) > 0.05) {
-        bottomVideo.currentTime = masterTime;
-      }
-
-      if (masterVideo.paused) {
-        if (!topVideo.paused) {
-          topVideo.pause();
-        }
-        if (!bottomVideo.paused) {
-          bottomVideo.pause();
-        }
-        return;
-      }
-
-      if (topVideo.paused) {
-        void topVideo.play().catch(() => undefined);
-      }
-      if (bottomVideo.paused) {
-        void bottomVideo.play().catch(() => undefined);
-      }
+    const publishPanOffset = useCallback((offsetPercentX: number) => {
+      gimbalStateRef.current.position = offsetPercentX;
+      publishedPanRef.current = offsetPercentX;
+      setActivePanOffsetX(offsetPercentX);
+      onSpeakerOffsetChangeRef.current?.(offsetPercentX);
     }, []);
 
     const publishPlaybackTime = useCallback((timeSeconds: number) => {
@@ -260,69 +163,15 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       onTimeUpdateRef.current?.(timeSeconds);
     }, []);
 
-    const syncShotLayoutForTime = useCallback((timeSeconds: number) => {
-      const segment = resolveSpeakerSegmentAtTime(speakerSegmentsRef.current, timeSeconds);
-      const dimensions = videoDimensionsRef.current;
-      if (!segment || !dimensions) {
-        return;
-      }
-
-      const segmentKey = segmentShotKey(segment);
-      const isShotCut = shotCutSfxPrimedRef.current && segmentKey !== activeSegmentKeyRef.current;
-      if (segmentKey === activeSegmentKeyRef.current) {
-        return;
-      }
-
-      activeSegmentKeyRef.current = segmentKey;
-      shotCutSfxPrimedRef.current = true;
-
-      if (isShotCut && segment.startSeconds > 0.05) {
-        triggerSfx({
-          slotKey: `shot-${segmentKey}`,
-          url: resolveSfxUrlForEvent("shot-cut"),
-        });
-      }
-
-      if (segment.layoutType === "split-screen") {
-        const leftRaw =
-          segment.leftOffsetPercentX ??
-          mapNormalizedFaceCenterXToOffsetPercentX(SPLIT_SCREEN_DEFAULT_LEFT_CENTER_X);
-        const rightRaw =
-          segment.rightOffsetPercentX ??
-          mapNormalizedFaceCenterXToOffsetPercentX(SPLIT_SCREEN_DEFAULT_RIGHT_CENTER_X);
-        const splitLayout = computeSplitScreenTrackingLayout(
-          dimensions.width,
-          dimensions.height,
-          leftRaw,
-          rightRaw,
-        );
-
-        setLayoutMode("split-screen");
-        setReframeState({
-          needsReframe: splitLayout.needsReframe,
-          coverScale: splitLayout.coverScale,
-        });
-        setTopPanOffsetX(splitLayout.topHalf.offsetPercentX);
-        setBottomPanOffsetX(splitLayout.bottomHalf.offsetPercentX);
-        setActivePanOffsetX(0);
-        return;
-      }
-
-      const singleLayout = computeSpeakerTrackingLayout(
-        dimensions.width,
-        dimensions.height,
-        segment.offsetPercentX,
-      );
-
-      setLayoutMode("single");
-      setReframeState({
-        needsReframe: singleLayout.needsReframe,
-        coverScale: singleLayout.coverScale,
-      });
-      setActivePanOffsetX(singleLayout.offsetPercentX);
-      setTopPanOffsetX(0);
-      setBottomPanOffsetX(0);
-    }, [triggerSfx]);
+    const snapGimbalToTime = useCallback(
+      async (timeSeconds: number) => {
+        const { resolveTrajectoryOffsetAtTime } = await import("@/lib/capcut/face-tracker");
+        const target = resolveTrajectoryOffsetAtTime(trajectorySegmentsRef.current, timeSeconds);
+        gimbalStateRef.current = { position: target, velocity: 0 };
+        publishPanOffset(target);
+      },
+      [publishPanOffset],
+    );
 
     const phraseBoundaryStarts = useMemo(() => {
       const blockSize = subtitlePreset.phraseBlockSize;
@@ -335,44 +184,43 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       return starts;
     }, [normalizedTranscript, subtitlePreset.phraseBlockSize]);
 
-    const runFaceTracking = useCallback(async (video: HTMLVideoElement, width: number, height: number) => {
-      if (typeof window === "undefined") {
-        return;
-      }
+    const runOfflineSegmentDetection = useCallback(
+      async (video: HTMLVideoElement, width: number, height: number) => {
+        if (typeof window === "undefined") {
+          return;
+        }
 
-      if (!needsVerticalCropReframe(width, height) || faceDetectionStartedRef.current) {
-        return;
-      }
+        if (!needsVerticalCropReframe(width, height) || faceDetectionStartedRef.current) {
+          return;
+        }
 
-      faceDetectionStartedRef.current = true;
+        faceDetectionStartedRef.current = true;
 
-      try {
-        const { detectSpeakerOffsetSegments } = await import("@/lib/capcut/face-tracker");
-        const detection = await detectSpeakerOffsetSegments(video, {
-          phraseStarts: phraseBoundaryStarts,
-          durationSeconds: video.duration,
-        });
+        try {
+          const { coerceSegmentsToSingleLayout, detectSpeakerOffsetSegments } = await import(
+            "@/lib/capcut/face-tracker"
+          );
+          const detection = await detectSpeakerOffsetSegments(video, {
+            phraseStarts: phraseBoundaryStarts,
+            durationSeconds: video.duration,
+          });
 
-        speakerSegmentsRef.current = detection.segments;
-        activeSegmentKeyRef.current = "";
-        applyReframeBase(width, height);
-        syncShotLayoutForTime(video.currentTime);
-        onSpeakerOffsetChangeRef.current?.(detection.offsetPercentX);
-        onSpeakerOffsetSegmentsChangeRef.current?.(detection.segments);
-      } catch (error: unknown) {
-        console.warn("[VideoPlayerOverlay] Face tracking failed; using centered crop.", error);
-        console.info("[FaceTracker] Result offset: 0% (overlay fallback)");
-        speakerSegmentsRef.current = [];
-        activeSegmentKeyRef.current = "";
-        setLayoutMode("single");
-        setActivePanOffsetX(0);
-        setTopPanOffsetX(0);
-        setBottomPanOffsetX(0);
-        applyReframeBase(width, height);
-        onSpeakerOffsetChangeRef.current?.(0);
-        onSpeakerOffsetSegmentsChangeRef.current?.([]);
-      }
-    }, [applyReframeBase, phraseBoundaryStarts, syncShotLayoutForTime]);
+          const singleSegments = coerceSegmentsToSingleLayout(detection.segments);
+          trajectorySegmentsRef.current = singleSegments;
+          applyReframeBase(width, height);
+          onSpeakerOffsetSegmentsChangeRef.current?.(singleSegments);
+          await snapGimbalToTime(video.currentTime);
+        } catch (error: unknown) {
+          console.warn("[VideoPlayerOverlay] Face tracking failed; using centered crop.", error);
+          trajectorySegmentsRef.current = [];
+          applyReframeBase(width, height);
+          gimbalStateRef.current = { position: 0, velocity: 0 };
+          publishPanOffset(0);
+          onSpeakerOffsetSegmentsChangeRef.current?.([]);
+        }
+      },
+      [applyReframeBase, phraseBoundaryStarts, publishPanOffset, snapGimbalToTime],
+    );
 
     const captureVideoDimensions = useCallback(() => {
       const video = videoRef.current;
@@ -396,16 +244,13 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       }
 
       videoDimensionsRef.current = nextDimensions;
-      speakerSegmentsRef.current = [];
-      activeSegmentKeyRef.current = "";
-      setLayoutMode("single");
-      setActivePanOffsetX(0);
-      setTopPanOffsetX(0);
-      setBottomPanOffsetX(0);
+      trajectorySegmentsRef.current = [];
+      gimbalStateRef.current = { position: 0, velocity: 0 };
+      publishPanOffset(0);
       applyReframeBase(nextDimensions.width, nextDimensions.height);
       onVideoDimensionsChangeRef.current?.(nextDimensions.width, nextDimensions.height);
-      void runFaceTracking(video, nextDimensions.width, nextDimensions.height);
-    }, [applyReframeBase, runFaceTracking]);
+      void runOfflineSegmentDetection(video, nextDimensions.width, nextDimensions.height);
+    }, [applyReframeBase, publishPanOffset, runOfflineSegmentDetection]);
 
     const togglePlayback = useCallback(() => {
       const video = videoRef.current;
@@ -415,24 +260,17 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       }
 
       if (video.paused) {
-        void sfxManagerRef.current.unlock();
-        void video.play().then(() => {
-          if (layoutModeRef.current === "split-screen") {
-            syncSplitMirrorVideos(video);
-          }
-        }).catch(() => undefined);
+        void video.play().catch(() => undefined);
         if (bgm) {
           void playBgmWithVideo(video, bgm);
         }
       } else {
         video.pause();
-        splitTopVideoRef.current?.pause();
-        splitBottomVideoRef.current?.pause();
         if (bgm) {
           pauseBgm(bgm);
         }
       }
-    }, [syncSplitMirrorVideos]);
+    }, []);
 
     const handleSeek = useCallback(
       (nextTime: number) => {
@@ -444,35 +282,34 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
         video.currentTime = nextTime;
         resetAudioForSeek(nextTime);
         publishPlaybackTime(nextTime);
-        syncShotLayoutForTime(nextTime);
-        if (layoutModeRef.current === "split-screen") {
-          syncSplitMirrorVideos(video);
-        }
         syncToVideoTime(nextTime);
+        void snapGimbalToTime(nextTime);
       },
-      [publishPlaybackTime, resetAudioForSeek, syncShotLayoutForTime, syncSplitMirrorVideos, syncToVideoTime],
+      [publishPlaybackTime, resetAudioForSeek, snapGimbalToTime, syncToVideoTime],
     );
-    useImperativeHandle(ref, () => ({
-      seekTo(seconds: number) {
-        const video = videoRef.current;
-        if (!video) return;
-        video.currentTime = seconds;
-        resetAudioForSeek(seconds);
-        activeIndexRef.current = -1;
-        publishPlaybackTime(seconds);
-        syncShotLayoutForTime(seconds);
-        if (layoutModeRef.current === "split-screen" && video) {
-          syncSplitMirrorVideos(video);
-        }
-        syncToVideoTime(seconds);
-      },
-      getCurrentTime() {
-        return videoRef.current?.currentTime ?? 0;
-      },
-      getVideoDimensions() {
-        return videoDimensionsRef.current;
-      },
-    }), [publishPlaybackTime, resetAudioForSeek, syncShotLayoutForTime, syncSplitMirrorVideos, syncToVideoTime]);
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        seekTo(seconds: number) {
+          const video = videoRef.current;
+          if (!video) return;
+          video.currentTime = seconds;
+          resetAudioForSeek(seconds);
+          activeIndexRef.current = -1;
+          publishPlaybackTime(seconds);
+          syncToVideoTime(seconds);
+          void snapGimbalToTime(seconds);
+        },
+        getCurrentTime() {
+          return videoRef.current?.currentTime ?? 0;
+        },
+        getVideoDimensions() {
+          return videoDimensionsRef.current;
+        },
+      }),
+      [publishPlaybackTime, resetAudioForSeek, snapGimbalToTime, syncToVideoTime],
+    );
 
     useEffect(() => {
       onActiveWordChangeRef.current = onActiveWordChange;
@@ -495,29 +332,12 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
     }, [onTimeUpdate]);
 
     useEffect(() => {
-      const masterVideo = videoRef.current;
-      if (!masterVideo || layoutMode !== "split-screen") {
-        return;
-      }
-
-      syncSplitMirrorVideos(masterVideo);
-    }, [layoutMode, syncSplitMirrorVideos, topPanOffsetX, bottomPanOffsetX]);
-
-    useEffect(() => {
       faceDetectionStartedRef.current = false;
-      speakerSegmentsRef.current = [];
-      activeSegmentKeyRef.current = "";
-      shotCutSfxPrimedRef.current = false;
-      hookSfxTriggeredRef.current = false;
-      setLayoutMode("single");
-      setActivePanOffsetX(0);
-      setTopPanOffsetX(0);
-      setBottomPanOffsetX(0);
-    }, [videoUrl]);
-
-    useEffect(() => {
-      sfxManagerRef.current.setVolume(CAPCUT_EXPORT_AUDIO.sfxVolume);
-    }, []);
+      trajectorySegmentsRef.current = [];
+      gimbalStateRef.current = { position: 0, velocity: 0 };
+      lastFrameTimeRef.current = null;
+      publishPanOffset(0);
+    }, [publishPanOffset, videoUrl]);
 
     useEffect(() => {
       const bgm = bgmRef.current;
@@ -528,32 +348,72 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
 
     useEffect(() => {
       void preloadBgmAudio();
-      void sfxManagerRef.current.preload(collectCapCutSfxUrls(normalizedTranscript));
-    }, [normalizedTranscript]);
+    }, []);
 
     useEffect(() => {
       const video = videoRef.current;
       const bgm = bgmRef.current;
       if (!video || !bgm) return;
 
-      const tick = (): void => {
+      let gimbalModule:
+        | {
+            resolveTrajectoryOffsetAtTime: (
+              segments: SpeakerOffsetSegment[],
+              timeSeconds: number,
+            ) => number;
+            stepGimbalPanTowardTarget: (
+              state: { position: number; velocity: number },
+              targetOffsetPercentX: number,
+              dtSeconds: number,
+            ) => { position: number; velocity: number };
+          }
+        | null = null;
+
+      void import("@/lib/capcut/face-tracker").then((module) => {
+        gimbalModule = module;
+      });
+
+      const tick = (frameTimeMs: number): void => {
         const timeSeconds = video.currentTime;
         publishPlaybackTime(timeSeconds);
-        syncShotLayoutForTime(timeSeconds);
-        if (layoutModeRef.current === "split-screen") {
-          syncSplitMirrorVideos(video);
-        }
         syncToVideoTime(timeSeconds);
+
+        if (needsReframeRef.current && gimbalModule) {
+          const previousFrameMs = lastFrameTimeRef.current;
+          lastFrameTimeRef.current = frameTimeMs;
+          const dtSeconds =
+            previousFrameMs === null
+              ? 1 / 60
+              : Math.max(0, Math.min(0.05, (frameTimeMs - previousFrameMs) / 1000));
+
+          const target = gimbalModule.resolveTrajectoryOffsetAtTime(
+            trajectorySegmentsRef.current,
+            timeSeconds,
+          );
+
+          // Seek / large discontinuities: retarget without zigzag overshoot.
+          if (Math.abs(target - gimbalStateRef.current.position) > 28) {
+            gimbalStateRef.current = { position: target, velocity: 0 };
+            publishPanOffset(target);
+          } else {
+            const nextState = gimbalModule.stepGimbalPanTowardTarget(
+              gimbalStateRef.current,
+              target,
+              video.paused ? Math.min(dtSeconds, 1 / 60) : dtSeconds,
+            );
+            gimbalStateRef.current = nextState;
+            if (Math.abs(nextState.position - publishedPanRef.current) > 0.04) {
+              publishPanOffset(nextState.position);
+            }
+          }
+        }
+
         rafRef.current = requestAnimationFrame(tick);
       };
 
       const handleTimeUpdate = (): void => {
         const timeSeconds = video.currentTime;
         publishPlaybackTime(timeSeconds);
-        syncShotLayoutForTime(timeSeconds);
-        if (layoutModeRef.current === "split-screen") {
-          syncSplitMirrorVideos(video);
-        }
         syncToVideoTime(timeSeconds);
       };
 
@@ -570,29 +430,23 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
 
       const handlePlay = (): void => {
         setIsPlaying(true);
-        void sfxManagerRef.current.unlock();
+        lastFrameTimeRef.current = null;
         void playBgmWithVideo(video, bgm);
-        if (layoutModeRef.current === "split-screen") {
-          syncSplitMirrorVideos(video);
-        }
       };
 
       const handlePause = (): void => {
         setIsPlaying(false);
         pauseBgm(bgm);
-        splitTopVideoRef.current?.pause();
-        splitBottomVideoRef.current?.pause();
+        lastFrameTimeRef.current = null;
       };
 
       const handleSeeked = (): void => {
         const timeSeconds = video.currentTime;
         publishPlaybackTime(timeSeconds);
-        syncShotLayoutForTime(timeSeconds);
-        if (layoutModeRef.current === "split-screen") {
-          syncSplitMirrorVideos(video);
-        }
         resetAudioForSeek(timeSeconds);
         syncToVideoTime(timeSeconds);
+        lastFrameTimeRef.current = null;
+        void snapGimbalToTime(timeSeconds);
         if (!video.paused) {
           void playBgmWithVideo(video, bgm);
         }
@@ -632,27 +486,23 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
         video.removeEventListener("durationchange", handleDurationChange);
         if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
         pauseBgm(bgm);
-        sfxManagerRef.current.reset();
       };
     }, [
       captureVideoDimensions,
+      publishPanOffset,
+      publishPlaybackTime,
       resetAudioForSeek,
+      snapGimbalToTime,
       syncToVideoTime,
       syncVideoAudioMix,
-      syncShotLayoutForTime,
-      syncSplitMirrorVideos,
-      publishPlaybackTime,
     ]);
 
-    const halfTransform = (offsetX: number): CSSProperties | undefined =>
-      reframeState.needsReframe
-        ? {
-            transform: `scale(${reframeState.coverScale}) translateX(${offsetX}%)`,
-            transformOrigin: "center center",
-          }
-        : undefined;
-
-    const singleVideoTransformStyle = halfTransform(activePanOffsetX);
+    const singleVideoTransformStyle: CSSProperties | undefined = reframeState.needsReframe
+      ? {
+          transform: `scale(${reframeState.coverScale}) translateX(${activePanOffsetX}%)`,
+          transformOrigin: "center center",
+        }
+      : undefined;
 
     return (
       <div
@@ -673,45 +523,13 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
         >
           <video
             ref={videoRef}
-            className={
-              layoutMode === "split-screen" && reframeState.needsReframe
-                ? "hidden"
-                : "relative z-10 h-full w-full bg-black object-contain"
-            }
-            style={layoutMode === "single" ? singleVideoTransformStyle : undefined}
+            className="relative z-10 h-full w-full bg-black object-contain"
+            style={singleVideoTransformStyle}
             src={videoUrl}
             crossOrigin="anonymous"
             playsInline
             preload="auto"
           />
-          {layoutMode === "split-screen" && reframeState.needsReframe ? (
-            <>
-              <div className="absolute inset-x-0 top-0 z-10 h-1/2 overflow-hidden bg-black">
-                <video
-                  ref={splitTopVideoRef}
-                  className="h-full w-full bg-black object-contain"
-                  style={halfTransform(topPanOffsetX)}
-                  src={videoUrl}
-                  crossOrigin="anonymous"
-                  muted
-                  playsInline
-                  preload="auto"
-                />
-              </div>
-              <div className="absolute inset-x-0 bottom-0 z-10 h-1/2 overflow-hidden border-t border-white/10 bg-black">
-                <video
-                  ref={splitBottomVideoRef}
-                  className="h-full w-full bg-black object-contain"
-                  style={halfTransform(bottomPanOffsetX)}
-                  src={videoUrl}
-                  crossOrigin="anonymous"
-                  muted
-                  playsInline
-                  preload="auto"
-                />
-              </div>
-            </>
-          ) : null}
 
           <div
             className={[
@@ -777,27 +595,20 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
           aria-hidden
         />
 
-        <div className="pointer-events-none absolute inset-0 z-20">
-          <div
-            className="absolute inset-x-0 flex justify-center"
-            style={{
-              top: `${subtitlePreset.webSubtitleTop * 100}%`,
-              transform: "translateY(-50%)",
-            }}
-          >
+        {phrase.length > 0 ? (
+          <div className="pointer-events-none absolute inset-0 z-20">
             <div
-              key={`${theme}-chunk-${phraseBlockStart}`}
-              className="inline-flex max-w-[92%] flex-wrap items-center justify-center gap-x-2 gap-y-1 px-2"
+              className="absolute inset-x-0 flex justify-center"
+              style={{
+                top: `${subtitlePreset.webSubtitleTop * 100}%`,
+                transform: "translateY(-50%)",
+              }}
             >
-              {phrase.length === 0 ? (
-                <span
-                  className="text-sm"
-                  style={getWebSubtitleWordStyle(subtitlePreset, false)}
-                >
-                  Press play to preview subtitles
-                </span>
-              ) : (
-                phrase.map((entry) => {
+              <div
+                key={`${theme}-chunk-${phraseBlockStart}`}
+                className="inline-flex max-w-[92%] flex-wrap items-center justify-center gap-x-2 gap-y-1 px-2"
+              >
+                {phrase.map((entry) => {
                   const isActive = entry.index === activeWordIndex;
                   const transcriptWord = normalizedTranscript[entry.index];
 
@@ -817,11 +628,11 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
                       {formatPhraseDisplayWord(entry.word, subtitlePreset)}
                     </span>
                   );
-                })
-              )}
+                })}
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
       </div>
     );
   },
