@@ -26,10 +26,19 @@ import {
   getWebSubtitleWordStyle,
   formatPhraseDisplayWord,
 } from "@/lib/capcut/presets";
+import {
+  needsBackgroundBlurLayer,
+} from "@/lib/capcut/video-effects";
+
+export interface VideoSourceDimensions {
+  width: number;
+  height: number;
+}
 
 export interface VideoPlayerOverlayHandle {
   seekTo: (seconds: number) => void;
   getCurrentTime: () => number;
+  getVideoDimensions: () => VideoSourceDimensions | null;
 }
 
 export interface VideoPlayerOverlayProps {
@@ -37,25 +46,52 @@ export interface VideoPlayerOverlayProps {
   transcript: TranscriptData;
   theme: ThemeId;
   onActiveWordChange?: (index: number) => void;
+  onVideoDimensionsChange?: (width: number, height: number) => void;
   className?: string;
 }
 
 export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlayerOverlayProps>(
-  function VideoPlayerOverlay({ videoUrl, transcript, theme, onActiveWordChange, className }, ref) {
+  function VideoPlayerOverlay(
+    { videoUrl, transcript, theme, onActiveWordChange, onVideoDimensionsChange, className },
+    ref,
+  ) {
     const videoRef = useRef<HTMLVideoElement>(null);
+    const backgroundVideoRef = useRef<HTMLVideoElement>(null);
     const bgmRef = useRef<HTMLAudioElement>(null);
     const sfxManagerRef = useRef(new SfxManager());
     const activeIndexRef = useRef(-1);
+    const videoDimensionsRef = useRef<VideoSourceDimensions | null>(null);
+    const needsBackgroundBlurRef = useRef(false);
     const triggeredKeywordSfxRef = useRef<Set<number>>(new Set());
     const rafRef = useRef<number | null>(null);
     const onActiveWordChangeRef = useRef(onActiveWordChange);
+    const onVideoDimensionsChangeRef = useRef(onVideoDimensionsChange);
 
     const normalizedTranscript = useMemo(() => normalizeTranscript(transcript), [transcript]);
     const subtitlePreset = getSubtitlePreset(theme);
 
     const [activeWordIndex, setActiveWordIndex] = useState(-1);
+    const [needsBackgroundBlur, setNeedsBackgroundBlur] = useState(false);
+
     const phrase = getPhraseWordsForIndex(normalizedTranscript, activeWordIndex, subtitlePreset);
     const phraseBlockStart = getPhraseBlockStartIndex(activeWordIndex, subtitlePreset.phraseBlockSize);
+
+    const syncBackgroundVideo = useCallback((video: HTMLVideoElement) => {
+      const backgroundVideo = backgroundVideoRef.current;
+      if (!backgroundVideo) {
+        return;
+      }
+
+      if (Math.abs(backgroundVideo.currentTime - video.currentTime) > 0.05) {
+        backgroundVideo.currentTime = video.currentTime;
+      }
+
+      if (video.paused) {
+        backgroundVideo.pause();
+      } else if (backgroundVideo.paused) {
+        void backgroundVideo.play().catch(() => undefined);
+      }
+    }, []);
 
     const syncVideoAudioMix = useCallback((video: HTMLVideoElement) => {
       const bgm = bgmRef.current;
@@ -98,8 +134,13 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       (currentTime: number) => {
         syncPlaybackAudio(currentTime);
         applyActiveIndex(findActiveWordIndex(normalizedTranscript, currentTime));
+
+        const video = videoRef.current;
+        if (video) {
+          syncBackgroundVideo(video);
+        }
       },
-      [applyActiveIndex, normalizedTranscript, syncPlaybackAudio],
+      [applyActiveIndex, normalizedTranscript, syncBackgroundVideo, syncPlaybackAudio],
     );
 
     const resetAudioForSeek = useCallback((seconds: number) => {
@@ -113,6 +154,33 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       }
     }, [normalizedTranscript]);
 
+    const captureVideoDimensions = useCallback(() => {
+      const video = videoRef.current;
+      if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+        return;
+      }
+
+      const nextDimensions: VideoSourceDimensions = {
+        width: video.videoWidth,
+        height: video.videoHeight,
+      };
+
+      const previousDimensions = videoDimensionsRef.current;
+      if (
+        previousDimensions?.width === nextDimensions.width &&
+        previousDimensions?.height === nextDimensions.height
+      ) {
+        return;
+      }
+
+      videoDimensionsRef.current = nextDimensions;
+
+      const shouldBlur = needsBackgroundBlurLayer(nextDimensions.width, nextDimensions.height);
+      needsBackgroundBlurRef.current = shouldBlur;
+      setNeedsBackgroundBlur(shouldBlur);
+      onVideoDimensionsChangeRef.current?.(nextDimensions.width, nextDimensions.height);
+    }, []);
+
     useImperativeHandle(ref, () => ({
       seekTo(seconds: number) {
         const video = videoRef.current;
@@ -125,11 +193,18 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       getCurrentTime() {
         return videoRef.current?.currentTime ?? 0;
       },
+      getVideoDimensions() {
+        return videoDimensionsRef.current;
+      },
     }), [resetAudioForSeek, syncToVideoTime]);
 
     useEffect(() => {
       onActiveWordChangeRef.current = onActiveWordChange;
     }, [onActiveWordChange]);
+
+    useEffect(() => {
+      onVideoDimensionsChangeRef.current = onVideoDimensionsChange;
+    }, [onVideoDimensionsChange]);
 
     useEffect(() => {
       sfxManagerRef.current.setVolume(CAPCUT_EXPORT_AUDIO.sfxVolume);
@@ -164,10 +239,12 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       const handlePlay = (): void => {
         void sfxManagerRef.current.unlock();
         void playBgmWithVideo(video, bgm);
+        syncBackgroundVideo(video);
       };
 
       const handlePause = (): void => {
         pauseBgm(bgm);
+        syncBackgroundVideo(video);
       };
 
       const handleSeeked = (): void => {
@@ -183,12 +260,18 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       };
 
       syncVideoAudioMix(video);
+      syncToVideoTime(video.currentTime);
       rafRef.current = requestAnimationFrame(tick);
       video.addEventListener("timeupdate", handleTimeUpdate);
       video.addEventListener("play", handlePlay);
       video.addEventListener("pause", handlePause);
       video.addEventListener("seeked", handleSeeked);
       video.addEventListener("volumechange", handleVolumeChange);
+      video.addEventListener("loadedmetadata", captureVideoDimensions);
+
+      if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        captureVideoDimensions();
+      }
 
       return () => {
         video.removeEventListener("timeupdate", handleTimeUpdate);
@@ -196,11 +279,18 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
         video.removeEventListener("pause", handlePause);
         video.removeEventListener("seeked", handleSeeked);
         video.removeEventListener("volumechange", handleVolumeChange);
+        video.removeEventListener("loadedmetadata", captureVideoDimensions);
         if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
         pauseBgm(bgm);
         sfxManagerRef.current.reset();
       };
-    }, [resetAudioForSeek, syncToVideoTime, syncVideoAudioMix]);
+    }, [
+      captureVideoDimensions,
+      resetAudioForSeek,
+      syncBackgroundVideo,
+      syncToVideoTime,
+      syncVideoAudioMix,
+    ]);
 
     return (
       <div
@@ -214,8 +304,23 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
           .join(" ")}
       >
         <video
+          ref={backgroundVideoRef}
+          aria-hidden
+          className={[
+            "pointer-events-none absolute inset-0 z-0 h-full w-full object-cover transition-opacity duration-150",
+            needsBackgroundBlur || needsBackgroundBlurRef.current
+              ? "scale-110 opacity-100 blur-[24px] brightness-[0.6]"
+              : "opacity-0",
+          ].join(" ")}
+          src={videoUrl}
+          muted
+          playsInline
+          preload="auto"
+        />
+
+        <video
           ref={videoRef}
-          className="relative z-0 h-full max-h-full w-full bg-black object-contain aspect-[9/16]"
+          className="relative z-10 h-full max-h-full w-full bg-black object-contain aspect-[9/16]"
           src={videoUrl}
           controls
           playsInline

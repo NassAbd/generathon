@@ -9,6 +9,14 @@ import {
   resolveKeywordSfxUrl,
   type SubtitleStylePreset,
 } from "@/lib/capcut/presets";
+import {
+  CAPCUT_BACKGROUND_BLUR,
+  CAPCUT_CANVAS_HEIGHT,
+  CAPCUT_CANVAS_RATIO,
+  CAPCUT_CANVAS_WIDTH,
+  computeBackgroundCoverScale,
+  needsBackgroundBlurLayer,
+} from "@/lib/capcut/video-effects";
 import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
 
@@ -24,6 +32,10 @@ export interface CapCutExportInput {
   transcript: TranscriptData;
   durationSeconds: number;
   theme: ThemeId;
+  /** Source pixel width; defaults to 1080 (vertical-first). */
+  sourceVideoWidth?: number;
+  /** Source pixel height; defaults to 1920 (vertical-first). */
+  sourceVideoHeight?: number;
 }
 
 export interface CapCutDraftBundle {
@@ -44,6 +56,7 @@ export interface CapCutDraftContent {
     height: number;
     ratio: string;
   };
+  ratio: string;
   platform: {
     app_source: "cc";
     app_version: string;
@@ -108,7 +121,10 @@ function createTrack(type: "video" | "text" | "audio", name: string): DraftRecor
   };
 }
 
-function createCompanionMaterials(trackType: "text" | "video" | "audio"): CompanionBundle {
+function createCompanionMaterials(
+  trackType: "text" | "video" | "audio",
+  options?: { canvasBlur?: number },
+): CompanionBundle {
   const speed: DraftRecord = { id: uuid(), type: "speed", speed: 1, mode: 0, curve_speed: null };
   const placeholder: DraftRecord = {
     id: uuid(),
@@ -150,9 +166,8 @@ function createCompanionMaterials(trackType: "text" | "video" | "audio"): Compan
     const canvas: DraftRecord = {
       id: uuid(),
       type: "canvas_color",
-      album_image: "",
-      blur: 0,
-      color: "",
+      blur: options?.canvasBlur ?? 0,
+      color: "#000000",
       image: "",
       image_id: "",
       image_name: "",
@@ -321,7 +336,7 @@ function pushAudioMaterial(
     path: assetRelativePath(options.url, "audio"),
     name: options.filename,
     duration: options.durationMicros,
-    type: "extract_music",
+    type: "sound",
     category_id: "",
     category_name: "local",
     check_flag: 1,
@@ -678,6 +693,79 @@ function pushMaterial(materials: DraftRecord, bucket: string, material: DraftRec
   (materials[bucket] as DraftRecord[]).push(material);
 }
 
+function collectMaterialIdsByBucket(materials: DraftRecord): Map<string, Set<string>> {
+  const buckets = new Map<string, Set<string>>();
+
+  for (const bucket of ["videos", "audios", "texts", "stickers", "video_effects"] as const) {
+    const items = materials[bucket];
+    if (!Array.isArray(items)) {
+      continue;
+    }
+
+    buckets.set(
+      bucket,
+      new Set(
+        (items as DraftRecord[])
+          .map((material) => material.id)
+          .filter((id): id is string => typeof id === "string"),
+      ),
+    );
+  }
+
+  return buckets;
+}
+
+function validateAudioTrackIsolation(draft: CapCutDraftContent): void {
+  const materialIdsByBucket = collectMaterialIdsByBucket(draft.materials);
+  const audioMaterialIds = materialIdsByBucket.get("audios") ?? new Set<string>();
+  const videoMaterialIds = materialIdsByBucket.get("videos") ?? new Set<string>();
+  const textMaterialIds = materialIdsByBucket.get("texts") ?? new Set<string>();
+
+  for (const track of draft.tracks as DraftRecord[]) {
+    const trackType = String(track.type ?? "");
+    const segments = Array.isArray(track.segments) ? (track.segments as DraftRecord[]) : [];
+
+    for (const segment of segments) {
+      const materialId = segment.material_id;
+      if (typeof materialId !== "string") {
+        continue;
+      }
+
+      if (trackType === "audio" && !audioMaterialIds.has(materialId)) {
+        throw new Error(
+          `Draft validation failed: audio track segment references non-audio material ${materialId}`,
+        );
+      }
+
+      if (trackType === "video" && audioMaterialIds.has(materialId)) {
+        throw new Error(
+          `Draft validation failed: video track segment references audio material ${materialId}`,
+        );
+      }
+
+      if (trackType === "video" && !videoMaterialIds.has(materialId)) {
+        throw new Error(
+          `Draft validation failed: video track segment references non-video material ${materialId}`,
+        );
+      }
+
+      if (trackType === "text" && !textMaterialIds.has(materialId)) {
+        throw new Error(
+          `Draft validation failed: text track segment references non-text material ${materialId}`,
+        );
+      }
+
+      if (trackType !== "audio" && trackType !== "video" && trackType !== "text") {
+        if (audioMaterialIds.has(materialId)) {
+          throw new Error(
+            `Draft validation failed: ${trackType} track segment references audio material ${materialId}`,
+          );
+        }
+      }
+    }
+  }
+}
+
 function validateDraftReferences(draft: CapCutDraftContent): void {
   const materialIds = new Set<string>();
 
@@ -710,6 +798,8 @@ function validateDraftReferences(draft: CapCutDraftContent): void {
       }
     }
   }
+
+  validateAudioTrackIsolation(draft);
 }
 
 export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
@@ -718,6 +808,13 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
   const timestamp = nowMicroseconds();
 
   const materials = createEmptyMaterials();
+  const sourceVideoWidth = input.sourceVideoWidth ?? 1080;
+  const sourceVideoHeight = input.sourceVideoHeight ?? 1920;
+  const needsBackgroundBlur = needsBackgroundBlurLayer(sourceVideoWidth, sourceVideoHeight);
+
+  const backgroundVideoTrack = needsBackgroundBlur
+    ? createTrack("video", "Background Video")
+    : null;
   const videoTrack = createTrack("video", "Main Video");
   const textTrack = createTrack("text", "Kinetic Subtitles");
   const sfxTrack = createTrack("audio", "SFX");
@@ -731,8 +828,8 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     path: assetRelativePath(input.videoUrl, "video"),
     material_name: videoFilename,
     duration: durationMicros,
-    width: 1080,
-    height: 1920,
+    width: sourceVideoWidth,
+    height: sourceVideoHeight,
     category_id: "",
     category_name: "local",
     check_flag: 7,
@@ -769,6 +866,32 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     },
   });
 
+  if (backgroundVideoTrack) {
+    const backgroundCoverScale = computeBackgroundCoverScale(sourceVideoWidth, sourceVideoHeight);
+    const backgroundCompanions = createCompanionMaterials("video", {
+      canvasBlur: CAPCUT_BACKGROUND_BLUR,
+    });
+    registerCompanions(materials, backgroundCompanions);
+    const backgroundSegment = baseSegment(
+      uuid(),
+      videoMaterialId,
+      String(backgroundVideoTrack.id),
+      { start: 0, duration: durationMicros },
+      backgroundCompanions.ids,
+      13000,
+    );
+    const backgroundClip = backgroundSegment.clip as DraftRecord;
+    backgroundClip.scale = {
+      x: backgroundCoverScale,
+      y: backgroundCoverScale,
+    };
+    backgroundSegment.uniform_scale = {
+      on: true,
+      value: backgroundCoverScale,
+    };
+    (backgroundVideoTrack.segments as DraftRecord[]).push(backgroundSegment);
+  }
+
   const videoCompanions = createCompanionMaterials("video");
   registerCompanions(materials, videoCompanions);
   const videoSegment = baseSegment(
@@ -779,7 +902,12 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     videoCompanions.ids,
     14000,
   );
+
   (videoTrack.segments as DraftRecord[]).push(videoSegment);
+  const mainVideoClip = videoSegment.clip as DraftRecord;
+  mainVideoClip.transform = { x: 0, y: 0 };
+  mainVideoClip.scale = { x: 1, y: 1 };
+  videoSegment.uniform_scale = { on: true, value: 1 };
 
   const subtitlePreset = getSubtitlePreset(input.theme);
   const subtitleSegmentPlans = buildCapCutSubtitleSegmentPlans(
@@ -846,16 +974,23 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     create_time: timestamp,
     update_time: timestamp,
     canvas_config: {
-      width: 1080,
-      height: 1920,
-      ratio: "9:16",
+      width: CAPCUT_CANVAS_WIDTH,
+      height: CAPCUT_CANVAS_HEIGHT,
+      ratio: CAPCUT_CANVAS_RATIO,
     },
+    ratio: CAPCUT_CANVAS_RATIO,
     platform: {
       app_source: "cc",
       app_version: "9.0.0",
       os: "mac",
     },
-    tracks: [videoTrack, textTrack, sfxTrack, bgmTrack],
+    tracks: [
+      ...(backgroundVideoTrack ? [backgroundVideoTrack] : []),
+      videoTrack,
+      textTrack,
+      sfxTrack,
+      bgmTrack,
+    ],
     materials,
     extra_info: {
       created_via: "motion-decorator",
@@ -882,7 +1017,9 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     "5. Reopen CapCut and relink any missing media if prompted.",
     "",
     "Timeline units: microseconds (1 second = 1,000,000).",
-    "Timeline tracks: Main Video, Kinetic Subtitles, SFX, Background Music.",
+    needsBackgroundBlur
+      ? "Timeline tracks: Background Video (blur), Main Video (contain), Kinetic Subtitles, SFX, Background Music."
+      : "Timeline tracks: Main Video, Kinetic Subtitles, SFX, Background Music.",
     "Audio mix: BGM ~12%, keyword SFX ~80%.",
     "Canvas: 1080 x 1920 (9:16).",
   ].join("\n");
@@ -897,6 +1034,8 @@ export interface CapCutProjectData {
   transcript: TranscriptData;
   durationSeconds: number;
   theme: ThemeId;
+  sourceVideoWidth?: number;
+  sourceVideoHeight?: number;
 }
 
 export interface CapCutDirectWriteResult {
@@ -1134,6 +1273,7 @@ function enrichAudioMaterialForDraftInfo(material: DraftRecord): DraftRecord {
     lyric_type: 0,
     tts_task_id: "",
     ...material,
+    type: "sound",
     duration: typeof material.duration === "number" ? material.duration : 0,
     wave_points: Array.isArray(material.wave_points) ? material.wave_points : [],
   };
@@ -1241,20 +1381,16 @@ function mergeGeneratedIntoDraftInfoEnvelope(
   generated: CapCutDraftContent,
 ): DraftRecord {
   const merged: DraftRecord = { ...envelope };
-  const envelopeCanvas =
-    typeof merged.canvas_config === "object" && merged.canvas_config
-      ? (merged.canvas_config as DraftRecord)
-      : {};
 
   merged.duration = generated.duration;
   merged.fps = 30.0;
   merged.name = generated.name;
   merged.update_time = nowMicroseconds();
+  merged.ratio = CAPCUT_CANVAS_RATIO;
   merged.canvas_config = {
-    ...envelopeCanvas,
-    width: generated.canvas_config.width,
-    height: generated.canvas_config.height,
-    ratio: generated.canvas_config.ratio,
+    width: CAPCUT_CANVAS_WIDTH,
+    height: CAPCUT_CANVAS_HEIGHT,
+    ratio: CAPCUT_CANVAS_RATIO,
   };
   merged.tracks = (generated.tracks as DraftRecord[]).map((track) => ({
     ...track,
@@ -1416,6 +1552,8 @@ export async function writeDirectToCapCut(
     transcript: projectData.transcript,
     durationSeconds: projectData.durationSeconds,
     theme: projectData.theme,
+    sourceVideoWidth: projectData.sourceVideoWidth,
+    sourceVideoHeight: projectData.sourceVideoHeight,
   });
   logTextSegmentScaleSample(draftContent);
 

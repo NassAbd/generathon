@@ -21,6 +21,8 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
   const playerRef = useRef<VideoPlayerOverlayHandle>(null);
   const [theme, setTheme] = useState<ThemeId>(project.theme);
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
+  const [sourceVideoWidth, setSourceVideoWidth] = useState<number | undefined>(undefined);
+  const [sourceVideoHeight, setSourceVideoHeight] = useState<number | undefined>(undefined);
 
   const transcript = project.transcript_data ?? [];
   const themePreset = THEME_PRESETS[theme];
@@ -57,7 +59,12 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
           >
             + Transcribe Other
           </button>
-          <ExportCapCutLocalButton projectId={project.id} themeId={theme} />
+          <ExportCapCutLocalButton
+            projectId={project.id}
+            themeId={theme}
+            sourceVideoWidth={sourceVideoWidth}
+            sourceVideoHeight={sourceVideoHeight}
+          />
           <CopyShareLinkButton projectId={project.id} />
         </div>
       </header>
@@ -71,6 +78,10 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
               transcript={transcript}
               theme={theme}
               onActiveWordChange={setActiveWordIndex}
+              onVideoDimensionsChange={(width, height) => {
+                setSourceVideoWidth(width);
+                setSourceVideoHeight(height);
+              }}
               className="h-full max-h-[calc(100vh-11rem)] w-auto"
             />
           </div>

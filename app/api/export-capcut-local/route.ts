@@ -8,6 +8,8 @@ export const runtime = "nodejs";
 interface ExportCapCutLocalRequest {
   projectId: string;
   themeId?: string;
+  sourceVideoWidth?: number;
+  sourceVideoHeight?: number;
 }
 
 function errorResponse(message: string, status: number): Response {
@@ -45,6 +47,8 @@ export async function POST(request: Request): Promise<Response> {
       transcript: project.transcript_data,
       durationSeconds,
       theme: exportTheme,
+      sourceVideoWidth: body.sourceVideoWidth,
+      sourceVideoHeight: body.sourceVideoHeight,
     });
 
     const supabase = getSupabaseServerClient();
