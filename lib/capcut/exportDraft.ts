@@ -14,15 +14,10 @@ import {
   CAPCUT_CANVAS_RATIO,
   CAPCUT_CANVAS_WIDTH,
   computeSpeakerTrackingLayout,
-  computeSplitScreenTrackingLayout,
-  mapNormalizedFaceCenterXToOffsetPercentX,
   needsVerticalCropReframe,
   normalizeSpeakerOffsetSegments,
-  SPLIT_SCREEN_DEFAULT_LEFT_CENTER_X,
-  SPLIT_SCREEN_DEFAULT_RIGHT_CENTER_X,
   type SpeakerOffsetSegment,
   type SpeakerTrackingLayout,
-  type SplitScreenHalfLayout,
 } from "@/lib/capcut/video-effects";
 import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
@@ -105,7 +100,6 @@ function createEmptyMaterials(): DraftRecord {
     video_effects: [],
     material_animations: [],
     transitions: [],
-    masks: [],
     chromas: [],
     audio_fades: [],
     audio_effects: [],
@@ -288,68 +282,19 @@ function logTextSegmentScaleSample(draft: CapCutDraftContent): void {
   });
 }
 
-/** CapCut rectangle mask metadata (capcut-cli enums.json). */
-const SPLIT_SCREEN_RECTANGLE_MASK = {
-  name: "Rectangle",
-  resource_id: "7374021450748924432",
-  resource_type: "rectangle",
-  default_aspect_ratio: 1.0,
-} as const;
-
 interface TimedVideoSegmentOptions {
   sourceStartMicros?: number;
   volume?: number;
   renderIndex?: number;
-  /** Attach a native CapCut half-canvas crop mask via extra_material_refs. */
-  maskHalf?: "top" | "bottom";
-  /** Reuse a pre-registered mask material id (avoids duplicating identical masks). */
-  maskMaterialId?: string;
 }
 
-function createSplitScreenHalfMaskMaterial(half: "top" | "bottom", maskId?: string): DraftRecord {
-  const centerY = half === "top" ? 0.5 : -0.5;
+/** CapCut export uses single-track framing; wide/split shots fall back to center crop. */
+function resolveExportOffsetPercentX(segment: SpeakerOffsetSegment): number {
+  if (segment.layoutType === "split-screen") {
+    return 0;
+  }
 
-  return {
-    id: maskId ?? uuid(),
-    type: "mask",
-    name: SPLIT_SCREEN_RECTANGLE_MASK.name,
-    category: "video",
-    category_id: "",
-    category_name: "",
-    platform: "all",
-    position_info: "",
-    resource_type: SPLIT_SCREEN_RECTANGLE_MASK.resource_type,
-    resource_id: SPLIT_SCREEN_RECTANGLE_MASK.resource_id,
-    config: {
-      aspectRatio: SPLIT_SCREEN_RECTANGLE_MASK.default_aspect_ratio,
-      centerX: 0,
-      centerY,
-      feather: 0,
-      height: 0.5,
-      invert: false,
-      rotation: 0,
-      roundCorner: 0,
-      width: 1,
-    },
-  };
-}
-
-function registerSplitScreenHalfMask(materials: DraftRecord, half: "top" | "bottom"): string {
-  const mask = createSplitScreenHalfMaskMaterial(half);
-  pushMaterial(materials, "masks", mask);
-  return String(mask.id);
-}
-
-function applyInvisibleAudioCarrierLayout(videoSegment: DraftRecord): void {
-  const clip = videoSegment.clip as DraftRecord;
-  clip.alpha = 0;
-  clip.rotation = 0;
-  clip.scale = { x: 1, y: 1 };
-  clip.transform = { x: 0, y: 0 };
-  clip.flip = { horizontal: false, vertical: false };
-  videoSegment.volume = 1;
-  videoSegment.visible = true;
-  videoSegment.uniform_scale = { on: true, value: 1 };
+  return segment.offsetPercentX;
 }
 
 function applyMainVideoClipLayout(
@@ -366,26 +311,9 @@ function applyMainVideoClipLayout(
     x: layout.coverScale,
     y: layout.coverScale,
   };
+  videoSegment.visible = true;
   videoSegment.volume = 1;
   videoSegment.uniform_scale = { on: true, value: layout.coverScale };
-}
-
-function applySplitScreenHalfClipLayout(
-  videoSegment: DraftRecord,
-  halfLayout: SplitScreenHalfLayout,
-): void {
-  const clip = videoSegment.clip as DraftRecord;
-  clip.alpha = 1;
-  clip.transform = {
-    x: halfLayout.capcutTransformX,
-    y: halfLayout.capcutTransformY,
-  };
-  clip.scale = {
-    x: halfLayout.coverScale,
-    y: halfLayout.coverScale,
-  };
-  videoSegment.volume = 0;
-  videoSegment.uniform_scale = { on: true, value: halfLayout.coverScale };
 }
 
 function appendTimedVideoSegment(
@@ -404,15 +332,6 @@ function appendTimedVideoSegment(
   registerCompanions(materials, videoCompanions);
 
   const companionIds = [...videoCompanions.ids];
-  if (options.maskHalf !== undefined || options.maskMaterialId !== undefined) {
-    const maskId =
-      options.maskMaterialId ??
-      (options.maskHalf !== undefined ? registerSplitScreenHalfMask(materials, options.maskHalf) : undefined);
-    if (maskId) {
-      companionIds.push(maskId);
-    }
-  }
-
   const videoSegment = baseSegment(
     uuid(),
     videoMaterialId,
@@ -432,8 +351,6 @@ function appendTimedVideoSegment(
 
 function appendMainVideoSegments(
   mainVideoTrack: DraftRecord,
-  splitTopTrack: DraftRecord,
-  splitBottomTrack: DraftRecord,
   materials: DraftRecord,
   videoMaterialId: string,
   sourceVideoWidth: number,
@@ -464,71 +381,14 @@ function appendMainVideoSegments(
   }
 
   let referenceLayout = computeSpeakerTrackingLayout(sourceVideoWidth, sourceVideoHeight, 0);
-  let splitTopMaskId: string | undefined;
-  let splitBottomMaskId: string | undefined;
 
   for (const segment of normalizedSegments) {
     const startMicros = toMicroseconds(segment.startSeconds);
     const segmentDurationMicros = toMicroseconds(segment.endSeconds - segment.startSeconds);
-
-    if (segment.layoutType === "split-screen") {
-      const leftRaw =
-        segment.leftOffsetPercentX ??
-        mapNormalizedFaceCenterXToOffsetPercentX(SPLIT_SCREEN_DEFAULT_LEFT_CENTER_X);
-      const rightRaw =
-        segment.rightOffsetPercentX ??
-        mapNormalizedFaceCenterXToOffsetPercentX(SPLIT_SCREEN_DEFAULT_RIGHT_CENTER_X);
-      const splitLayout = computeSplitScreenTrackingLayout(
-        sourceVideoWidth,
-        sourceVideoHeight,
-        leftRaw,
-        rightRaw,
-      );
-
-      // Invisible carrier on main track keeps source audio locked to the master timeline.
-      appendTimedVideoSegment(
-        mainVideoTrack,
-        materials,
-        videoMaterialId,
-        startMicros,
-        segmentDurationMicros,
-        applyInvisibleAudioCarrierLayout,
-        { renderIndex: 14000 },
-      );
-      if (!splitTopMaskId) {
-        splitTopMaskId = registerSplitScreenHalfMask(materials, "top");
-      }
-      if (!splitBottomMaskId) {
-        splitBottomMaskId = registerSplitScreenHalfMask(materials, "bottom");
-      }
-
-      // Top half — left speaker with native 0–50% vertical mask.
-      appendTimedVideoSegment(
-        splitTopTrack,
-        materials,
-        videoMaterialId,
-        startMicros,
-        segmentDurationMicros,
-        (videoSegment) => applySplitScreenHalfClipLayout(videoSegment, splitLayout.topHalf),
-        { volume: 0, renderIndex: 14100, maskMaterialId: splitTopMaskId },
-      );
-      // Bottom half — right speaker with native 50–100% vertical mask.
-      appendTimedVideoSegment(
-        splitBottomTrack,
-        materials,
-        videoMaterialId,
-        startMicros,
-        segmentDurationMicros,
-        (videoSegment) => applySplitScreenHalfClipLayout(videoSegment, splitLayout.bottomHalf),
-        { volume: 0, renderIndex: 14050, maskMaterialId: splitBottomMaskId },
-      );
-      continue;
-    }
-
     const layout = computeSpeakerTrackingLayout(
       sourceVideoWidth,
       sourceVideoHeight,
-      segment.offsetPercentX,
+      resolveExportOffsetPercentX(segment),
     );
     referenceLayout = layout;
 
@@ -1085,8 +945,6 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
   const sourceVideoHeight = input.sourceVideoHeight ?? 1920;
 
   const videoTrack = createTrack("video", "Main Video");
-  const splitTopTrack = createTrack("video", "Split Top");
-  const splitBottomTrack = createTrack("video", "Split Bottom");
   const textTrack = createTrack("text", "Kinetic Subtitles");
   const sfxTrack = createTrack("audio", "SFX");
   const bgmTrack = createTrack("audio", "Background Music");
@@ -1139,8 +997,6 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
 
   const speakerLayout = appendMainVideoSegments(
     videoTrack,
-    splitTopTrack,
-    splitBottomTrack,
     materials,
     videoMaterialId,
     sourceVideoWidth,
@@ -1150,17 +1006,6 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     input.speakerOffsetSegments,
     input.speakerOffsetPercentX,
   );
-
-  const videoTracks: DraftRecord[] = [];
-  if ((splitBottomTrack.segments as DraftRecord[]).length > 0) {
-    videoTracks.push(splitBottomTrack);
-  }
-  if ((splitTopTrack.segments as DraftRecord[]).length > 0) {
-    videoTracks.push(splitTopTrack);
-  }
-  if ((videoTrack.segments as DraftRecord[]).length > 0) {
-    videoTracks.push(videoTrack);
-  }
 
   const subtitlePreset = getSubtitlePreset(input.theme);
   const subtitleSegmentPlans = buildCapCutSubtitleSegmentPlans(
@@ -1239,7 +1084,7 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       app_version: "9.0.0",
       os: "mac",
     },
-    tracks: [...videoTracks, textTrack, sfxTrack, bgmTrack],
+    tracks: [videoTrack, textTrack, sfxTrack, bgmTrack],
     materials,
     extra_info: {
       created_via: "motion-decorator",
@@ -1266,9 +1111,10 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     "5. Reopen CapCut and relink any missing media if prompted.",
     "",
     "Timeline units: microseconds (1 second = 1,000,000).",
+    "Timeline tracks: Main Video, Kinetic Subtitles, SFX, Background Music.",
     speakerLayout.needsReframe
-      ? "Timeline tracks: Main Video, Split Top/Bottom (wide shots), Kinetic Subtitles, SFX, Background Music."
-      : "Timeline tracks: Main Video, Kinetic Subtitles, SFX, Background Music.",
+      ? "Video framing: single-track 9:16 crop; wide/split shots export centered (offset 0%)."
+      : "Video framing: single-track, native aspect.",
     "Audio mix: BGM ~12%, keyword SFX ~80%.",
     "Canvas: 1080 x 1920 (9:16).",
   ].join("\n");
@@ -1324,10 +1170,6 @@ const GENERATED_MATERIAL_BUCKETS = [
   "smart_crops",
   "manual_deformations",
 ] as const;
-
-const MATERIAL_BUCKET_ALIASES: Record<string, string> = {
-  masks: "common_mask",
-};
 
 const DRAFT_INFO_SEGMENT_BASE: DraftRecord = {
   render_timerange: { start: 0, duration: 0 },
@@ -1610,17 +1452,6 @@ function mergeMaterialsIntoEnvelope(
 
     merged[bucket] = (generatedItems as DraftRecord[]).map((material) =>
       enrichMaterialForDraftInfo(material, bucket),
-    );
-  }
-
-  for (const [sourceBucket, targetBucket] of Object.entries(MATERIAL_BUCKET_ALIASES)) {
-    const generatedItems = generatedMaterials[sourceBucket];
-    if (!Array.isArray(generatedItems) || generatedItems.length === 0) {
-      continue;
-    }
-
-    merged[targetBucket] = (generatedItems as DraftRecord[]).map((material) =>
-      enrichMaterialForDraftInfo(material, targetBucket),
     );
   }
 

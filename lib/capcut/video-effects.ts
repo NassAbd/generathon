@@ -187,6 +187,9 @@ export function computeSplitScreenHalfLayout(
   rawOffsetPercentX: number,
   half: "top" | "bottom",
 ): SplitScreenHalfLayout {
+  // The matching segment clip carries a 50%-high native crop. Keep the
+  // full-canvas cover scale so that the cropped 16:9 region fills the 9:8
+  // half-canvas (1080 × 960), then place it with transform.y below.
   const coverScale = computeVerticalCoverScale(sourceWidth, sourceHeight);
   const amplifiedOffset = amplifySpeakerOffsetPercentX(rawOffsetPercentX);
 
