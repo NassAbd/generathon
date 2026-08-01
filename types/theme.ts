@@ -8,6 +8,8 @@ export interface ThemePreset {
   highlightClass: string;
   pillClass: string;
   assetGlowClass: string;
+  overlayShellClass: string;
+  accentLabelClass: string;
 }
 
 export const THEME_PRESETS: Record<ThemeId, ThemePreset> = {
@@ -15,28 +17,34 @@ export const THEME_PRESETS: Record<ThemeId, ThemePreset> = {
     id: "pop_3d",
     label: "Pop 3D",
     description: "Vibrant colors, 3D bounce",
-    subtitleClass: "text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]",
-    highlightClass: "text-yellow-300 scale-110",
+    subtitleClass: "font-sans text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]",
+    highlightClass: "font-bold text-yellow-300",
     pillClass: "bg-gradient-to-r from-violet-600/90 to-fuchsia-600/90 border border-white/20",
     assetGlowClass: "drop-shadow-[0_0_18px_rgba(168,85,247,0.8)]",
+    overlayShellClass: "ring-1 ring-violet-500/20",
+    accentLabelClass: "text-violet-300",
   },
   cyberpunk: {
     id: "cyberpunk",
     label: "Cyberpunk",
     description: "Neon glow, glitch accents",
-    subtitleClass: "text-cyan-100 font-mono tracking-wider drop-shadow-[0_0_12px_rgba(34,211,238,0.6)]",
-    highlightClass: "text-fuchsia-300 animate-glitch",
+    subtitleClass: "font-mono tracking-wider text-cyan-100 drop-shadow-[0_0_12px_rgba(34,211,238,0.6)]",
+    highlightClass: "font-bold text-fuchsia-300",
     pillClass: "bg-black/70 border border-cyan-400/50 shadow-[0_0_24px_rgba(34,211,238,0.25)]",
     assetGlowClass: "drop-shadow-[0_0_20px_rgba(236,72,153,0.9)]",
+    overlayShellClass: "ring-1 ring-cyan-400/30 shadow-[0_0_40px_rgba(34,211,238,0.12)]",
+    accentLabelClass: "text-cyan-300",
   },
   minimal_tech: {
     id: "minimal_tech",
     label: "Minimal Tech",
     description: "Clean dark-mode typography",
-    subtitleClass: "text-slate-100 font-light tracking-tight",
-    highlightClass: "text-white font-semibold",
+    subtitleClass: "font-light tracking-tight text-slate-100",
+    highlightClass: "font-semibold text-white",
     pillClass: "bg-slate-900/80 border border-slate-600/60 backdrop-blur-sm",
     assetGlowClass: "drop-shadow-[0_4px_12px_rgba(15,23,42,0.6)]",
+    overlayShellClass: "ring-1 ring-slate-600/40",
+    accentLabelClass: "text-slate-300",
   },
 };
 

@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { NextRequest } from "next/server";
 
 import { buildCapCutDraft } from "@/lib/capcut/exportDraft";
 import { fetchProjectById } from "@/lib/projects/fetchProject";
@@ -7,62 +8,87 @@ import { parseThemeId } from "@/types/theme";
 
 export const runtime = "nodejs";
 
-interface ExportCapCutRequest {
-  projectId: string;
+async function buildExportZip(projectId: string): Promise<{ buffer: Buffer; filename: string }> {
+  const project = await fetchProjectById(projectId);
+  if (!project) {
+    throw new Error("Project not found.");
+  }
+
+  if (!project.transcript_data?.length) {
+    throw new Error("Project transcript is not ready.");
+  }
+
+  const durationSeconds =
+    project.duration_seconds ??
+    project.transcript_data.reduce((maxEnd, entry) => Math.max(maxEnd, entry.end), 0);
+
+  const { draftContent, readme } = buildCapCutDraft({
+    projectId: project.id,
+    projectName: `Motion Decorator ${project.id.slice(0, 8)}`,
+    videoUrl: project.video_url,
+    transcript: project.transcript_data,
+    durationSeconds,
+    theme: parseThemeId(project.theme),
+  });
+
+  const zip = new JSZip();
+  zip.file("draft_content.json", JSON.stringify(draftContent, null, 2));
+  zip.file("README.txt", readme);
+
+  const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  const filename = `motion-decorator-${project.id.slice(0, 8)}.zip`;
+
+  const supabase = getSupabaseServerClient();
+  await supabase
+    .from("projects")
+    .update({ capcut_draft_url: `local-export:${project.id}` })
+    .eq("id", project.id);
+
+  return { buffer, filename };
 }
 
-function isValidRequest(body: unknown): body is ExportCapCutRequest {
-  return typeof body === "object" && body !== null && typeof (body as ExportCapCutRequest).projectId === "string";
+function errorResponse(message: string, status: number): Response {
+  return Response.json({ error: message }, { status });
 }
 
-export async function POST(request: Request): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   try {
-    const body: unknown = await request.json();
-    if (!isValidRequest(body)) {
-      return Response.json({ error: "Expected { projectId }." }, { status: 400 });
+    const projectId = request.nextUrl.searchParams.get("projectId");
+    if (!projectId) {
+      return errorResponse("Missing projectId query parameter.", 400);
     }
 
-    const project = await fetchProjectById(body.projectId);
-    if (!project) {
-      return Response.json({ error: "Project not found." }, { status: 404 });
-    }
-
-    if (!project.transcript_data?.length) {
-      return Response.json({ error: "Project transcript is not ready." }, { status: 400 });
-    }
-
-    const durationSeconds =
-      project.duration_seconds ??
-      project.transcript_data.reduce((maxEnd, entry) => Math.max(maxEnd, entry.end), 0);
-
-    const { draftContent, readme } = buildCapCutDraft({
-      projectId: project.id,
-      projectName: `Motion Decorator ${project.id.slice(0, 8)}`,
-      videoUrl: project.video_url,
-      transcript: project.transcript_data,
-      durationSeconds,
-      theme: parseThemeId(project.theme),
-    });
-
-    const zip = new JSZip();
-    zip.file("draft_content.json", JSON.stringify(draftContent, null, 2));
-    zip.file("README.txt", readme);
-    const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
-
-    const supabase = getSupabaseServerClient();
-    await supabase
-      .from("projects")
-      .update({ capcut_draft_url: `local-export:${project.id}` })
-      .eq("id", project.id);
-
-    return new Response(new Uint8Array(zipBuffer), {
+    const { buffer, filename } = await buildExportZip(projectId);
+    return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="motion-decorator-${project.id.slice(0, 8)}.zip"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "CapCut export failed.";
-    return Response.json({ error: message }, { status: 500 });
+    const status = message === "Project not found." ? 404 : 500;
+    return errorResponse(message, status);
+  }
+}
+
+export async function POST(request: Request): Promise<Response> {
+  try {
+    const body = (await request.json()) as { projectId?: string };
+    if (!body.projectId) {
+      return errorResponse("Expected { projectId }.", 400);
+    }
+
+    const { buffer, filename } = await buildExportZip(body.projectId);
+    return new Response(new Uint8Array(buffer), {
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+      },
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "CapCut export failed.";
+    const status = message === "Project not found." ? 404 : 500;
+    return errorResponse(message, status);
   }
 }

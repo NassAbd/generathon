@@ -2,13 +2,15 @@
 
 import { useCallback, useRef, useState } from "react";
 
+import { CopyShareLinkButton } from "@/components/CopyShareLinkButton";
 import { ExportCapCutButton } from "@/components/ExportCapCutButton";
+import { ExportCapCutLocalButton } from "@/components/ExportCapCutLocalButton";
 import { ThemeSelector } from "@/components/ThemeSelector";
 import { TranscriptSidebar } from "@/components/TranscriptSidebar";
 import { VideoPlayerOverlay, type VideoPlayerOverlayHandle } from "@/components/VideoPlayerOverlay";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { ProjectRecord } from "@/lib/projects/fetchProject";
-import type { ThemeId } from "@/types/theme";
+import { THEME_PRESETS, type ThemeId } from "@/types/theme";
 
 export interface ProjectViewProps {
   project: ProjectRecord;
@@ -20,6 +22,7 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
 
   const transcript = project.transcript_data ?? [];
+  const themePreset = THEME_PRESETS[theme];
 
   const handleThemeChange = useCallback(async (nextTheme: ThemeId) => {
     setTheme(nextTheme);
@@ -34,13 +37,22 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-10">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-violet-300">Project Preview</p>
+          <p className={`text-sm font-semibold uppercase tracking-[0.22em] ${themePreset.accentLabelClass}`}>
+            Pitch Preview
+          </p>
           <h1 className="mt-2 text-3xl font-bold text-white">Synchronized overlay playback</h1>
-          <p className="mt-2 text-sm text-slate-400">Project {project.id.slice(0, 8)}… · {transcript.length} words</p>
+          <p className="mt-2 text-sm text-slate-400">
+            {themePreset.label} theme · {transcript.length} words · project {project.id.slice(0, 8)}…
+          </p>
         </div>
-        <ExportCapCutButton projectId={project.id} />
+
+        <div className="flex flex-wrap items-start gap-3">
+          <ExportCapCutLocalButton projectId={project.id} />
+          <CopyShareLinkButton projectId={project.id} />
+          <ExportCapCutButton projectId={project.id} />
+        </div>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">

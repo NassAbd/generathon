@@ -15,11 +15,7 @@ export function ExportCapCutButton({ projectId }: ExportCapCutButtonProps): JSX.
     setError(null);
 
     try {
-      const response = await fetch("/api/export-capcut", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId }),
-      });
+      const response = await fetch(`/api/export-capcut?projectId=${encodeURIComponent(projectId)}`);
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -48,7 +44,7 @@ export function ExportCapCutButton({ projectId }: ExportCapCutButtonProps): JSX.
         disabled={isExporting}
         className="rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_0_30px_rgba(168,85,247,0.35)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-70"
       >
-        {isExporting ? "Building CapCut Draft…" : "Export to CapCut Draft"}
+        {isExporting ? "Building CapCut Draft…" : "Export CapCut Draft (.zip)"}
       </button>
       {error && <p className="text-xs text-rose-400">{error}</p>}
     </div>

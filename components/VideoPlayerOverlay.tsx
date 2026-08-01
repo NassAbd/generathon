@@ -13,8 +13,6 @@ import { findActiveWordIndex, getPhraseWindow, normalizeTranscript } from "@/lib
 import type { TranscriptData, TranscriptWord } from "@/types/transcript";
 import { THEME_PRESETS, type ThemeId } from "@/types/theme";
 
-const OVERLAY_DEBUG = process.env.NODE_ENV === "development";
-
 export interface VideoPlayerOverlayHandle {
   seekTo: (seconds: number) => void;
   getCurrentTime: () => number;
@@ -45,7 +43,7 @@ function AssetBadge({ assetUrl, effect, word, glowClass }: AssetBadgeProps): JSX
 
   return (
     <div
-      className={`flex h-24 w-24 items-center justify-center rounded-2xl border border-white/20 bg-black/45 p-2 backdrop-blur-md ${glowClass}`}
+      className={`flex h-24 w-24 items-center justify-center rounded-2xl border border-white/20 bg-black/45 p-2 backdrop-blur-md transition-all duration-200 ${glowClass}`}
     >
       {useEmoji ? (
         <span className="select-none text-6xl leading-none" role="img" aria-label={word}>
@@ -56,10 +54,7 @@ function AssetBadge({ assetUrl, effect, word, glowClass }: AssetBadgeProps): JSX
           src={resolvedUrl}
           alt={word}
           className="h-full w-full object-contain"
-          onError={() => {
-            console.warn("[VideoPlayerOverlay] Asset image failed, using emoji fallback:", resolvedUrl);
-            setUseEmoji(true);
-          }}
+          onError={() => setUseEmoji(true)}
         />
       )}
     </div>
@@ -75,18 +70,6 @@ function effectClass(effect: TranscriptWord["effect"] | undefined, theme: ThemeI
   return "";
 }
 
-function logSyncDebug(currentTime: number, index: number, transcript: TranscriptData): void {
-  if (!OVERLAY_DEBUG || index < 0) return;
-  const word = transcript[index];
-  console.log("[VideoPlayerOverlay] sync", {
-    currentTime: Number(currentTime.toFixed(3)),
-    activeWord: word.word,
-    highlight: word.highlight,
-    asset_url: word.asset_url ?? null,
-    range: `${word.start.toFixed(2)}–${word.end.toFixed(2)}`,
-  });
-}
-
 export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlayerOverlayProps>(
   function VideoPlayerOverlay({ videoUrl, transcript, theme, onActiveWordChange }, ref) {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -96,20 +79,19 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
     const onActiveWordChangeRef = useRef(onActiveWordChange);
 
     const normalizedTranscript = useMemo(() => normalizeTranscript(transcript), [transcript]);
+    const themePreset = THEME_PRESETS[theme];
 
     const [activeWordIndex, setActiveWordIndex] = useState(-1);
-    const themePreset = THEME_PRESETS[theme];
     const activeWord = activeWordIndex >= 0 ? normalizedTranscript[activeWordIndex] : null;
     const phrase = getPhraseWindow(normalizedTranscript, activeWordIndex, 2);
 
     const applyActiveIndex = useCallback(
-      (nextIndex: number, currentTime: number) => {
+      (nextIndex: number) => {
         if (nextIndex === activeIndexRef.current) return;
 
         activeIndexRef.current = nextIndex;
         setActiveWordIndex(nextIndex);
         onActiveWordChangeRef.current?.(nextIndex);
-        logSyncDebug(currentTime, nextIndex, normalizedTranscript);
 
         const word = nextIndex >= 0 ? normalizedTranscript[nextIndex] : null;
         if (word?.highlight && word.sfx_url) {
@@ -123,7 +105,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
 
     const syncToVideoTime = useCallback(
       (currentTime: number) => {
-        applyActiveIndex(findActiveWordIndex(normalizedTranscript, currentTime), currentTime);
+        applyActiveIndex(findActiveWordIndex(normalizedTranscript, currentTime));
       },
       [applyActiveIndex, normalizedTranscript],
     );
@@ -183,7 +165,10 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
     }, [syncToVideoTime]);
 
     return (
-      <div className="relative isolate overflow-hidden rounded-2xl border border-white/10 bg-black shadow-glow">
+      <div
+        data-theme={theme}
+        className={`relative isolate overflow-hidden rounded-2xl border border-white/10 bg-black shadow-glow transition-all duration-200 ${themePreset.overlayShellClass}`}
+      >
         <video
           ref={videoRef}
           className="relative z-0 aspect-[9/16] w-full bg-black object-contain"
@@ -196,10 +181,13 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
         <div className="pointer-events-none absolute inset-0 z-20">
           <div className="absolute inset-x-0 bottom-0 flex justify-center p-6">
             <div
-              className={`inline-flex max-w-[92%] flex-wrap items-center justify-center gap-2 rounded-full px-5 py-3 ${themePreset.pillClass}`}
+              key={theme}
+              className={`inline-flex max-w-[92%] flex-wrap items-center justify-center gap-2 rounded-full px-5 py-3 transition-all duration-200 ${themePreset.pillClass}`}
             >
               {phrase.length === 0 ? (
-                <span className={`text-sm ${themePreset.subtitleClass}`}>Press play to preview subtitles</span>
+                <span className={`text-sm transition-colors duration-200 ${themePreset.subtitleClass}`}>
+                  Press play to preview subtitles
+                </span>
               ) : (
                 phrase.map((entry) => {
                   const isActive = entry.index === activeWordIndex;
@@ -207,13 +195,13 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
                     <span
                       key={entry.index}
                       className={[
-                        "inline-block px-1 transition-transform duration-150",
+                        "inline-block px-1 transition-all duration-200",
                         themePreset.subtitleClass,
                         entry.highlight ? themePreset.highlightClass : "",
                         isActive && entry.effect
                           ? effectClass(entry.effect as TranscriptWord["effect"], theme)
                           : "",
-                        isActive ? "opacity-100" : "opacity-70",
+                        isActive ? "scale-110 opacity-100" : "opacity-70",
                       ]
                         .filter(Boolean)
                         .join(" ")}
@@ -230,7 +218,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
             <AnimatePresence mode="wait">
               {activeWord?.highlight && (
                 <motion.div
-                  key={`${activeWordIndex}-${activeWord.word}`}
+                  key={`${activeWordIndex}-${activeWord.word}-${theme}`}
                   initial={{ opacity: 0, scale: 0.35, y: 28, rotate: -8 }}
                   animate={{ opacity: 1, scale: 1, y: 0, rotate: 0 }}
                   exit={{ opacity: 0, scale: 0.65, y: -16, rotate: 6 }}
