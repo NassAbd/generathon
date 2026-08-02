@@ -11,9 +11,7 @@
 > **Transform raw video clips into viral, dynamically subtitled shorts with AI-driven karaoke captions & auto-ducked background music in 1-click.**
 
 [Overview](#-overview--vision) · [Demo](#-demo--screenshots) · [Features](#-key-features) · [Stack](#-technical-architecture--stack) · [Setup](#-getting-started--local-setup)
-
-
-[![Watch the demo on YouTube](https://img.youtube.com/vi/qYTPJdWQOnw/hqdefault.jpg)](https://youtu.be/qYTPJdWQOnw)
+<video src="docs/screenshots/demo_generathon.mp4" width="100%" controls></video>
 
 </div>
 
@@ -54,7 +52,7 @@ A **studio** that automates the pipeline end-to-end:
 
 ## 🎬 Demo & Screenshots
 
-**Demo video:** [https://youtu.be/qYTPJdWQOnw](https://youtu.be/qYTPJdWQOnw)
+**Demo video:** [Local MP4](docs/screenshots/demo_generathon.mp4) · [YouTube](https://youtu.be/qYTPJdWQOnw)
 
 ### Landing Page (Single Viewport Upload)
 

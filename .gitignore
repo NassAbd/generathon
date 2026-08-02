@@ -62,6 +62,8 @@ documentation/
 !docs/screenshots/*.jpeg
 !docs/screenshots/*.webp
 !docs/screenshots/*.gif
+!docs/screenshots/*.mp4
+
 
 node_modules/
 
