@@ -1,5 +1,7 @@
 "use client";
 
+import { getSubtitlePreset } from "@/lib/capcut/presets";
+import { cn } from "@/lib/utils";
 import { THEME_PRESETS, type ThemeId } from "@/types/theme";
 
 export interface ThemeSelectorProps {
@@ -9,33 +11,47 @@ export interface ThemeSelectorProps {
 
 export function ThemeSelector({ value, onChange }: ThemeSelectorProps): JSX.Element {
   const activePreset = THEME_PRESETS[value];
+  const activeAccent = getSubtitlePreset(value).activeColor;
 
   return (
     <section
       aria-label="Theme selector"
-      className={`rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors duration-200 ${activePreset.overlayShellClass}`}
+      className="shrink-0 rounded-2xl border border-border bg-card/60 p-3"
     >
-      <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${activePreset.accentLabelClass}`}>
+      <h2
+        className="mb-2 font-display text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+        style={{ color: activeAccent }}
+      >
         Theme · {activePreset.label}
-      </p>
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        {Object.values(THEME_PRESETS).map((preset) => {
-          const isActive = preset.id === value;
+      </h2>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        {(Object.keys(THEME_PRESETS) as ThemeId[]).map((themeId) => {
+          const preset = THEME_PRESETS[themeId];
+          const accent = getSubtitlePreset(themeId).activeColor;
+          const isActive = themeId === value;
+
           return (
             <button
-              key={preset.id}
+              key={themeId}
               type="button"
-              onClick={() => onChange(preset.id)}
-              className={`rounded-xl border px-3 py-3 text-left transition duration-200 ${
-                isActive
-                  ? preset.pillClass
-                  : "border-white/10 bg-black/20 hover:border-white/25"
-              }`}
+              onClick={() => onChange(themeId)}
+              style={isActive ? { borderColor: accent } : undefined}
+              className={cn(
+                "rounded-xl border p-3 text-left transition-colors",
+                isActive ? "bg-accent" : "border-border hover:bg-accent/50",
+              )}
             >
-              <p className={`text-sm font-semibold ${isActive ? "text-white" : "text-slate-200"}`}>
-                {preset.label}
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  className="size-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: accent }}
+                  aria-hidden
+                />
+                <span className="truncate text-sm font-semibold">{preset.label}</span>
+              </div>
+              <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">
+                {preset.description}
               </p>
-              <p className="mt-1 text-xs text-slate-400">{preset.description}</p>
             </button>
           );
         })}

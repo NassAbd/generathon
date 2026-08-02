@@ -1,8 +1,22 @@
 import type { Metadata } from "next";
-import { Inter, Montserrat, Rubik } from "next/font/google";
+import { DM_Sans, Inter, Montserrat, Rubik, Space_Grotesk } from "next/font/google";
 import type { ReactNode } from "react";
 
 import "./globals.css";
+
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-dm-sans",
+  display: "swap",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--font-space-grotesk",
+  display: "swap",
+});
 
 const montserrat = Montserrat({
   subsets: ["latin"],
@@ -26,13 +40,16 @@ const rubik = Rubik({
 });
 
 export const metadata: Metadata = {
-  title: "Motion Decorator",
-  description: "Create dynamic subtitles and motion overlays from your video.",
+  title: "Subtitler Studio",
+  description: "Turn raw footage into subtitled shorts with karaoke captions and CapCut export.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>): JSX.Element {
   return (
-    <html lang="en" className={`${montserrat.variable} ${inter.variable} ${rubik.variable}`}>
+    <html
+      lang="en"
+      className={`${dmSans.variable} ${spaceGrotesk.variable} ${montserrat.variable} ${inter.variable} ${rubik.variable}`}
+    >
       <body className="font-sans antialiased">{children}</body>
     </html>
   );

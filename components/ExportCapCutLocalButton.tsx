@@ -1,5 +1,6 @@
 "use client";
 
+import { Rocket } from "lucide-react";
 import { useState } from "react";
 
 import type { SpeakerOffsetSegment } from "@/lib/capcut/video-effects";
@@ -60,23 +61,29 @@ export function ExportCapCutLocalButton({
   }
 
   return (
-    <div className="flex flex-col items-start gap-2">
+    <div className="flex flex-col items-end gap-1">
       <button
         type="button"
         onClick={() => void handleExport()}
         disabled={isExporting}
-        className="rounded-xl bg-gradient-to-r from-cyan-500 to-violet-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_0_30px_rgba(34,211,238,0.28)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-70"
+        className="inline-flex h-9 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-medium transition-colors hover:bg-accent disabled:cursor-wait disabled:opacity-70"
       >
-        {isExporting ? "Writing to CapCut folder…" : "🚀 Open Directly in CapCut"}
+        <Rocket className="size-4" />
+        <span className="hidden sm:inline">
+          {isExporting ? "Writing to CapCut…" : "Open in CapCut"}
+        </span>
       </button>
 
-      {toast && (
-        <p className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300" role="status">
+      {toast ? (
+        <p
+          className="max-w-xs rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-right text-xs text-primary"
+          role="status"
+        >
           {toast}
         </p>
-      )}
+      ) : null}
 
-      {error && <p className="text-xs text-rose-400">{error}</p>}
+      {error ? <p className="max-w-xs text-right text-xs text-destructive">{error}</p> : null}
     </div>
   );
 }

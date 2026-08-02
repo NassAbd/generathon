@@ -2,18 +2,24 @@
 
 import { useEffect, useRef } from "react";
 
+import { getSubtitlePreset } from "@/lib/capcut/presets";
+import { cn } from "@/lib/utils";
+import type { ThemeId } from "@/types/theme";
 import type { TranscriptData } from "@/types/transcript";
 
 export interface TranscriptSidebarProps {
   transcript: TranscriptData;
   activeWordIndex: number;
+  theme: ThemeId;
   onSeek: (seconds: number, wordIndex: number) => void;
 }
 
-function formatTimestamp(seconds: number): string {
+function formatTimecode(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
-  return `${minutes}:${remainder.toFixed(2).padStart(5, "0")}`;
+  const whole = Math.floor(remainder);
+  const centiseconds = Math.round((remainder - whole) * 100);
+  return `${minutes}:${String(whole).padStart(2, "0")}.${String(centiseconds).padStart(2, "0")}`;
 }
 
 function isElementVisibleInContainer(element: HTMLElement, container: HTMLElement): boolean {
@@ -22,10 +28,16 @@ function isElementVisibleInContainer(element: HTMLElement, container: HTMLElemen
   return elementRect.top >= containerRect.top && elementRect.bottom <= containerRect.bottom;
 }
 
-export function TranscriptSidebar({ transcript, activeWordIndex, onSeek }: TranscriptSidebarProps): JSX.Element {
+export function TranscriptSidebar({
+  transcript,
+  activeWordIndex,
+  theme,
+  onSeek,
+}: TranscriptSidebarProps): JSX.Element {
   const listRef = useRef<HTMLDivElement>(null);
   const activeItemRef = useRef<HTMLButtonElement>(null);
   const previousActiveIndexRef = useRef(-1);
+  const accent = getSubtitlePreset(theme).activeColor;
 
   useEffect(() => {
     const container = listRef.current;
@@ -42,43 +54,39 @@ export function TranscriptSidebar({ transcript, activeWordIndex, onSeek }: Trans
   }, [activeWordIndex]);
 
   return (
-    <aside className="flex h-full min-h-0 flex-col rounded-2xl border border-white/10 bg-white/[0.03]">
-      <div className="border-b border-white/10 px-4 py-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-300">Transcript</p>
-        <p className="mt-1 text-sm text-slate-400">{transcript.length} words · click to seek</p>
+    <aside className="flex min-h-0 flex-col rounded-2xl border border-border bg-card/60">
+      <div className="shrink-0 border-b border-border px-4 py-3">
+        <h2 className="font-display text-xs font-semibold uppercase tracking-[0.18em]">Transcript</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {transcript.length} words · click to seek
+        </p>
       </div>
-
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        <ul className="space-y-1">
-          {transcript.map((entry, index) => {
-            const isActive = index === activeWordIndex;
-            return (
-              <li key={`${index}-${entry.start}`}>
-                <button
-                  ref={isActive ? activeItemRef : null}
-                  type="button"
-                  onClick={() => onSeek(entry.start, index)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition ${
-                    isActive
-                      ? "bg-violet-500/20 ring-1 ring-violet-400/40"
-                      : "hover:bg-white/[0.04]"
-                  }`}
-                >
-                  <span className="w-14 shrink-0 font-mono text-xs text-slate-500">
-                    {formatTimestamp(entry.start)}
-                  </span>
-                  <span
-                    className={`flex-1 text-sm ${
-                      entry.highlight ? "font-semibold text-yellow-300" : "text-slate-200"
-                    } ${isActive ? "text-white" : ""}`}
-                  >
-                    {entry.word}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2">
+        {transcript.map((word, index) => {
+          const isActive = index === activeWordIndex;
+          return (
+            <button
+              key={`${word.start}-${index}`}
+              ref={isActive ? activeItemRef : undefined}
+              type="button"
+              onClick={() => onSeek(word.start, index)}
+              className={cn(
+                "flex w-full items-center gap-4 rounded-lg px-3 py-1.5 text-left text-sm transition-colors",
+                isActive ? "bg-accent" : "hover:bg-accent/50",
+              )}
+            >
+              <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">
+                {formatTimecode(word.start)}
+              </span>
+              <span
+                className="min-w-0 truncate"
+                style={isActive ? { color: accent } : undefined}
+              >
+                {word.word}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </aside>
   );

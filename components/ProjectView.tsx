@@ -8,6 +8,9 @@ import { ExportMp4Button } from "@/components/ExportMp4Button";
 import { ThemeSelector } from "@/components/ThemeSelector";
 import { TranscriptSidebar } from "@/components/TranscriptSidebar";
 import { VideoPlayerOverlay, type VideoPlayerOverlayHandle } from "@/components/VideoPlayerOverlay";
+import { AppHeader } from "@/components/studio/AppHeader";
+import { EditorHeader } from "@/components/studio/editor/EditorHeader";
+import { VideoStage } from "@/components/studio/editor/VideoStage";
 import type { SpeakerOffsetSegment } from "@/lib/capcut/video-effects";
 import type { ProjectRecord } from "@/lib/projects/fetchProject";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -32,11 +35,14 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
   const transcript = project.transcript_data ?? [];
   const themePreset = THEME_PRESETS[theme];
 
-  const handleThemeChange = useCallback(async (nextTheme: ThemeId) => {
-    setTheme(nextTheme);
-    const supabase = getSupabaseBrowserClient();
-    await supabase.from("projects").update({ theme: nextTheme }).eq("id", project.id);
-  }, [project.id]);
+  const handleThemeChange = useCallback(
+    async (nextTheme: ThemeId) => {
+      setTheme(nextTheme);
+      const supabase = getSupabaseBrowserClient();
+      await supabase.from("projects").update({ theme: nextTheme }).eq("id", project.id);
+    },
+    [project.id],
+  );
 
   const handleSeek = useCallback((seconds: number, wordIndex: number) => {
     playerRef.current?.seekTo(seconds);
@@ -44,47 +50,44 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
   }, []);
 
   return (
-    <div className="mx-auto flex h-screen max-h-screen w-full max-w-7xl flex-col overflow-hidden p-4 md:p-6">
-      <header className="flex shrink-0 flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div className="min-w-0">
-          <p className={`text-sm font-semibold uppercase tracking-[0.22em] ${themePreset.accentLabelClass}`}>
-            Pitch Preview
-          </p>
-          <h1 className="mt-1 text-2xl font-bold text-white md:text-3xl">Synchronized overlay playback</h1>
-          <p className="mt-1 truncate text-sm text-slate-400">
-            {themePreset.label} theme · {transcript.length} words · project {project.id.slice(0, 8)}…
-          </p>
-        </div>
+    <div className="flex h-screen max-h-screen w-full flex-col overflow-hidden">
+      <AppHeader>
+        <button
+          type="button"
+          onClick={() => router.push("/")}
+          className="rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium transition-colors hover:bg-accent"
+        >
+          + New upload
+        </button>
+      </AppHeader>
 
-        <div className="flex flex-wrap items-center gap-2 md:gap-3">
-          <button
-            type="button"
-            onClick={() => router.push("/")}
-            className="rounded-xl border border-white/15 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white transition hover:border-violet-400/40 hover:bg-white/[0.07]"
-          >
-            + Transcribe Other
-          </button>
-          <ExportCapCutLocalButton
-            projectId={project.id}
-            themeId={theme}
-            sourceVideoWidth={sourceVideoWidth}
-            sourceVideoHeight={sourceVideoHeight}
-            speakerOffsetPercentX={speakerOffsetPercentX}
-            speakerOffsetSegments={speakerOffsetSegments}
-          />
-          <ExportMp4Button
-            projectId={project.id}
-            themeId={theme}
-            videoUrl={project.video_url}
-            transcript={transcript}
-            bgmUrl={project.selected_bgm_url}
-          />
-        </div>
-      </header>
+      <EditorHeader
+        title="Synchronized overlay playback"
+        subtitle={`${themePreset.label} theme · ${transcript.length} words · project ${project.id.slice(0, 8)}…`}
+        actions={
+          <>
+            <ExportCapCutLocalButton
+              projectId={project.id}
+              themeId={theme}
+              sourceVideoWidth={sourceVideoWidth}
+              sourceVideoHeight={sourceVideoHeight}
+              speakerOffsetPercentX={speakerOffsetPercentX}
+              speakerOffsetSegments={speakerOffsetSegments}
+            />
+            <ExportMp4Button
+              projectId={project.id}
+              themeId={theme}
+              videoUrl={project.video_url}
+              transcript={transcript}
+              bgmUrl={project.selected_bgm_url}
+            />
+          </>
+        }
+      />
 
-      <div className="mt-4 grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden md:grid-cols-12 md:gap-6">
-        <div className="flex min-h-0 flex-col gap-3 md:col-span-7">
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+      <div className="grid min-h-0 flex-1 gap-4 px-5 pb-5 md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:px-8">
+        <div className="flex min-h-0 flex-col gap-3">
+          <VideoStage>
             <VideoPlayerOverlay
               ref={playerRef}
               videoUrl={project.video_url}
@@ -98,21 +101,18 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
               }}
               onSpeakerOffsetChange={setSpeakerOffsetPercentX}
               onSpeakerOffsetSegmentsChange={setSpeakerOffsetSegments}
-              className="h-full max-h-[calc(100vh-11rem)] w-auto"
+              className="h-full w-full rounded-none border-0 shadow-none"
             />
-          </div>
-          <div className="shrink-0">
-            <ThemeSelector value={theme} onChange={(nextTheme) => void handleThemeChange(nextTheme)} />
-          </div>
+          </VideoStage>
+          <ThemeSelector value={theme} onChange={(nextTheme) => void handleThemeChange(nextTheme)} />
         </div>
 
-        <div className="min-h-0 md:col-span-5">
-          <TranscriptSidebar
-            transcript={transcript}
-            activeWordIndex={activeWordIndex}
-            onSeek={handleSeek}
-          />
-        </div>
+        <TranscriptSidebar
+          transcript={transcript}
+          activeWordIndex={activeWordIndex}
+          theme={theme}
+          onSeek={handleSeek}
+        />
       </div>
     </div>
   );

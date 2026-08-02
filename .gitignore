@@ -20,6 +20,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Upstream Lovable UI clone (reference only; not part of the Next app)
+.lovable-ui/
+
 # Dependencies
 node_modules/
 .venv/

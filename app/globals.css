@@ -2,14 +2,54 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
+:root {
+  color-scheme: dark;
+  --radius: 0.875rem;
+  --background: oklch(0.155 0.012 265);
+  --foreground: oklch(0.97 0.005 260);
+  --card: oklch(0.205 0.014 265);
+  --card-foreground: oklch(0.97 0.005 260);
+  --popover: oklch(0.205 0.014 265);
+  --popover-foreground: oklch(0.97 0.005 260);
+  --primary: oklch(0.85 0.2 145);
+  --primary-foreground: oklch(0.18 0.03 150);
+  --secondary: oklch(0.26 0.016 265);
+  --secondary-foreground: oklch(0.97 0.005 260);
+  --muted: oklch(0.25 0.014 265);
+  --muted-foreground: oklch(0.7 0.015 260);
+  --accent: oklch(0.28 0.02 265);
+  --accent-foreground: oklch(0.97 0.005 260);
+  --destructive: oklch(0.62 0.22 27);
+  --destructive-foreground: oklch(0.98 0.003 248);
+  --border: oklch(0.3 0.016 265);
+  --input: oklch(0.3 0.016 265);
+  --ring: oklch(0.85 0.2 145);
+  --surface-raised: oklch(0.235 0.016 265);
+  --gradient-export: linear-gradient(100deg, #22d3ee 0%, #6366f1 55%, #a855f7 100%);
+  --gradient-hero: radial-gradient(
+    60% 55% at 50% 0%,
+    oklch(0.85 0.2 145 / 0.14) 0%,
+    transparent 70%
+  );
+  --shadow-stage: 0 40px 120px -30px oklch(0.85 0.2 145 / 0.35);
+}
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  border-color: var(--border);
+}
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: #08090d;
-  color: #f8fafc;
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.035em;
 }

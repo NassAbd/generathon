@@ -31,77 +31,64 @@ export function ProcessingLoader({ status, highlightCount, wordCount }: Processi
         : Math.max(8, ((activeIndex + 1) / STATUS_STEPS.length) * 100);
 
   return (
-    <section className="mt-8 w-full max-w-xl rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-left">
+    <section className="w-full rounded-2xl border border-border bg-card/60 p-5 text-left">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-violet-300">Processing</p>
-          <h2 className="mt-2 text-xl font-semibold text-white">
-            {status === "failed" ? "Processing failed" : STATUS_STEPS[Math.max(activeIndex, 0)]?.label ?? "Working"}
+          <p className="font-display text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
+            Processing
+          </p>
+          <h2 className="mt-1 font-display text-lg font-semibold">
+            {status === "failed"
+              ? "Processing failed"
+              : STATUS_STEPS[Math.max(activeIndex, 0)]?.label ?? "Working"}
           </h2>
         </div>
-        {status !== "failed" && (
-          <span className="rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-200">
+        {status !== "failed" ? (
+          <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
             Live
           </span>
-        )}
+        ) : null}
       </div>
 
-      <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
+      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-muted">
         <div
-          className={`h-full rounded-full transition-all duration-500 ${
-            status === "failed" ? "bg-rose-500" : "bg-gradient-to-r from-violet-500 to-fuchsia-500"
-          }`}
+          className="h-full rounded-full bg-primary transition-[width] duration-500"
           style={{ width: `${progressPercent}%` }}
         />
       </div>
 
-      <ol className="mt-6 space-y-3">
+      <ol className="mt-4 space-y-2">
         {STATUS_STEPS.map((step, index) => {
-          const isComplete = status === "completed" || index < activeIndex;
-          const isCurrent = index === activeIndex && status !== "completed" && status !== "failed";
-
+          const isDone = status === "completed" || (activeIndex > index && status !== "failed");
+          const isActive = activeIndex === index && status !== "completed" && status !== "failed";
           return (
             <li
               key={step.key}
-              className={`flex items-start gap-3 rounded-xl border px-4 py-3 transition ${
-                isCurrent
-                  ? "border-violet-400/40 bg-violet-500/10"
-                  : isComplete
-                    ? "border-emerald-400/20 bg-emerald-500/5"
-                    : "border-white/5 bg-transparent"
+              className={`rounded-xl px-3 py-2 text-sm ${
+                isActive ? "bg-accent text-foreground" : "text-muted-foreground"
               }`}
             >
-              <span
-                className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                  isComplete
-                    ? "bg-emerald-500 text-white"
-                    : isCurrent
-                      ? "bg-violet-500 text-white"
-                      : "bg-white/10 text-slate-400"
-                }`}
-              >
-                {isComplete ? "✓" : index + 1}
-              </span>
-              <div>
-                <p className="text-sm font-medium text-white">{step.label}</p>
-                <p className="text-xs text-slate-400">{step.description}</p>
-              </div>
+              <p className="font-medium">
+                {isDone ? "✓ " : isActive ? "→ " : ""}
+                {step.label}
+              </p>
+              <p className="text-xs opacity-80">{step.description}</p>
             </li>
           );
         })}
       </ol>
 
-      {status === "completed" && wordCount !== undefined && (
-        <p className="mt-5 text-sm text-emerald-400">
+      {status === "completed" && wordCount !== undefined ? (
+        <p className="mt-4 text-sm text-primary">
           {wordCount} words transcribed · {highlightCount ?? 0} accents decorated
         </p>
-      )}
+      ) : null}
 
-      {status === "failed" && (
-        <p className="mt-5 text-sm text-rose-400">
+      {status === "failed" ? (
+        <p className="mt-4 text-sm text-destructive">
           Something went wrong while processing this clip. Try uploading again.
         </p>
-      )}
+      ) : null}
     </section>
   );
 }
