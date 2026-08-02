@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  CAPCUT_EXPORT_AUDIO,
   choosePhraseLineBreakIndex,
   formatPhraseDisplayWord,
   getPhraseWordsForIndex,
@@ -80,6 +79,11 @@ function waitForEvent(target: EventTarget, eventName: string, signal?: AbortSign
   });
 }
 
+/**
+ * Load a media element for Web Audio capture.
+ * `crossOrigin` MUST be set before `src` or CORS-tainted decode blocks AudioContext.
+ * Waits until `canplaythrough` so MediaElementSource has decodeable PCM.
+ */
 async function loadMediaElement<T extends HTMLMediaElement>(
   element: T,
   url: string,
@@ -90,19 +94,24 @@ async function loadMediaElement<T extends HTMLMediaElement>(
   element.src = url;
   element.load();
 
-  if (element.readyState >= HTMLMediaElement.HAVE_METADATA) {
-    return element;
+  const failOnError = waitForEvent(element, "error", signal).then(() => {
+    throw new Error(`Failed to load media: ${url}`);
+  });
+
+  if (element.readyState < HTMLMediaElement.HAVE_METADATA) {
+    await Promise.race([waitForEvent(element, "loadedmetadata", signal), failOnError]);
   }
 
-  await Promise.race([
-    waitForEvent(element, "loadedmetadata", signal),
-    waitForEvent(element, "error", signal).then(() => {
-      throw new Error(`Failed to load media: ${url}`);
-    }),
-  ]);
+  if (element.readyState < HTMLMediaElement.HAVE_ENOUGH_DATA) {
+    await Promise.race([waitForEvent(element, "canplaythrough", signal), failOnError]);
+  }
 
   return element;
 }
+
+/** Client MP4 BGM level — unity on the element, gain only via AudioContext. */
+const CLIENT_EXPORT_DIALOG_GAIN = 1;
+const CLIENT_EXPORT_BGM_GAIN = 0.25;
 
 function drawCoverVideo(
   ctx: CanvasRenderingContext2D,
@@ -278,21 +287,39 @@ export async function exportProjectWithClientCanvas(
     throw new Error("Unable to create canvas 2D context for export.");
   }
 
+  // Keep off-DOM elements attached — some browsers mute MediaElementSource otherwise.
+  const mediaHost = document.createElement("div");
+  mediaHost.setAttribute("aria-hidden", "true");
+  mediaHost.style.cssText =
+    "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;left:-9999px;top:-9999px;";
+  document.body.appendChild(mediaHost);
+
   const video = document.createElement("video");
   video.playsInline = true;
   video.muted = false;
+  // Unity element volume — mix levels are controlled only via GainNodes below.
+  // (Previously bgm.volume * bgmGain both used 0.12 → ~silent music.)
   video.volume = 1;
+  mediaHost.appendChild(video);
 
   const bgm = document.createElement("audio");
   bgm.loop = true;
-  bgm.volume = CAPCUT_EXPORT_AUDIO.bgmVolume;
+  bgm.volume = 1;
+  mediaHost.appendChild(bgm);
+
+  let hasBgm = false;
 
   await loadMediaElement(video, input.videoUrl, input.signal);
   if (input.bgmUrl) {
     try {
       await loadMediaElement(bgm, input.bgmUrl, input.signal);
-    } catch {
-      console.warn("[ClientExport] BGM failed to load; exporting dialog audio only.");
+      hasBgm = Boolean(bgm.src);
+    } catch (bgmError) {
+      console.warn(
+        "[ClientExport] BGM failed to load; exporting dialog audio only.",
+        bgmError,
+      );
+      hasBgm = false;
     }
   }
 
@@ -313,21 +340,31 @@ export async function exportProjectWithClientCanvas(
       await audioContext.resume();
     }
 
+    // Dialog → destination @ 1.0
     const videoSource = audioContext.createMediaElementSource(video);
-    videoSource.connect(mixedDestination);
+    const dialogGain = audioContext.createGain();
+    dialogGain.gain.value = CLIENT_EXPORT_DIALOG_GAIN;
+    videoSource.connect(dialogGain);
+    dialogGain.connect(mixedDestination);
 
-    if (input.bgmUrl && bgm.src) {
+    // BGM → destination @ 0.25 (0.2–0.3 band; element volume stays at 1 to avoid double attenuation)
+    if (hasBgm) {
       const bgmSource = audioContext.createMediaElementSource(bgm);
       const bgmGain = audioContext.createGain();
-      bgmGain.gain.value = CAPCUT_EXPORT_AUDIO.bgmVolume;
+      bgmGain.gain.value = CLIENT_EXPORT_BGM_GAIN;
       bgmSource.connect(bgmGain);
       bgmGain.connect(mixedDestination);
     }
 
     const canvasStream = canvas.captureStream(EXPORT_FPS);
+    const audioTracks = mixedDestination.stream.getAudioTracks();
+    if (audioTracks.length === 0) {
+      throw new Error("Audio mix destination produced no tracks for MediaRecorder.");
+    }
+
     const outputStream = new MediaStream([
       ...canvasStream.getVideoTracks(),
-      ...mixedDestination.stream.getAudioTracks(),
+      ...audioTracks,
     ]);
 
     const chunks: BlobPart[] = [];
@@ -347,15 +384,24 @@ export async function exportProjectWithClientCanvas(
       recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
     });
 
+    video.currentTime = 0;
+    if (hasBgm) {
+      bgm.currentTime = 0;
+    }
+
+    // Start recorder first so the first decoded frames/audio are captured,
+    // then kick video + BGM in the same turn for sync.
     recorder.start(250);
 
-    video.currentTime = 0;
-    bgm.currentTime = 0;
-
-    await video.play();
-    if (input.bgmUrl && bgm.src) {
-      void bgm.play().catch(() => undefined);
-    }
+    // Start dialog + BGM together so the mixed AudioContext stream stays in sync.
+    await Promise.all([
+      video.play(),
+      hasBgm
+        ? bgm.play().catch((error: unknown) => {
+            console.warn("[ClientExport] BGM play() failed; dialog-only mix.", error);
+          })
+        : Promise.resolve(),
+    ]);
 
     await new Promise<void>((resolve, reject) => {
       let frameHandle = 0;
@@ -419,7 +465,10 @@ export async function exportProjectWithClientCanvas(
     });
 
     video.pause();
-    bgm.pause();
+    if (hasBgm) {
+      bgm.pause();
+      bgm.currentTime = 0;
+    }
     input.onProgress?.(1);
 
     if (recorder.state === "recording") {
@@ -445,6 +494,7 @@ export async function exportProjectWithClientCanvas(
     bgm.removeAttribute("src");
     video.load();
     bgm.load();
+    mediaHost.remove();
     void audioContext.close().catch(() => undefined);
   }
 }
