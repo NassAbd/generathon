@@ -1,3 +1,5 @@
+import { bgmTrackFromStoredFields, getOrAssignProjectBgmTrack } from "@/lib/assets/bgm";
+import type { SpeakerOffsetSegment } from "@/lib/capcut/video-effects";
 import { writeDirectToCapCut } from "@/lib/capcut/exportDraft";
 import { fetchProjectById } from "@/lib/projects/fetchProject";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -10,6 +12,8 @@ interface ExportCapCutLocalRequest {
   themeId?: string;
   sourceVideoWidth?: number;
   sourceVideoHeight?: number;
+  speakerOffsetPercentX?: number;
+  speakerOffsetSegments?: SpeakerOffsetSegment[];
 }
 
 function errorResponse(message: string, status: number): Response {
@@ -39,7 +43,12 @@ export async function POST(request: Request): Promise<Response> {
     const exportTheme = resolveExportThemeId(body.themeId, project.theme);
     const projectName = "Motion Decorator Project";
 
-    // Downloads keyword SFX + BGM into assets/audio/, then links absolute paths in draft_info.json.
+    // Use the exact BGM already stored on the project (preview parity).
+    // Legacy rows without a stored track get a one-time backfill only.
+    const bgmTrack =
+      bgmTrackFromStoredFields(project.selected_bgm_track, project.selected_bgm_url) ??
+      (await getOrAssignProjectBgmTrack(project.id));
+
     const result = await writeDirectToCapCut(project.id, {
       projectId: project.id,
       projectName,
@@ -49,6 +58,10 @@ export async function POST(request: Request): Promise<Response> {
       theme: exportTheme,
       sourceVideoWidth: body.sourceVideoWidth,
       sourceVideoHeight: body.sourceVideoHeight,
+      speakerOffsetPercentX: body.speakerOffsetPercentX,
+      speakerOffsetSegments: body.speakerOffsetSegments,
+      bgmUrl: bgmTrack.url,
+      applySidechainDucking: false,
     });
 
     const supabase = getSupabaseServerClient();
@@ -60,6 +73,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({
       ok: true,
       message: "Project injected into CapCut! Re-open your latest project in CapCut.",
+      bgmFilename: bgmTrack.filename,
       ...result,
     });
   } catch (error: unknown) {

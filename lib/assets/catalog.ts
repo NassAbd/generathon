@@ -16,7 +16,8 @@ export const ASSET_FILES = [
 
 export const SFX_FILES = ["pop.mp3", "whoosh.mp3", "ding.mp3", "impact.mp3"] as const;
 
-export const BGM_FILES = ["bgm_loop.mp3"] as const;
+/** Index 0 = cartoon, Index 1 = lofi_relax — used for 1-of-2 alternation. */
+export const BGM_FILES = ["cartoon.mp3", "lofi_relax.mp3"] as const;
 
 export type AssetFile = (typeof ASSET_FILES)[number];
 export type SfxFile = (typeof SFX_FILES)[number];
@@ -49,7 +50,7 @@ export function getSfxUrl(filename: SfxFile | string): string {
   return getSupabasePublicUrl(ASSETS_BUCKET, filename);
 }
 
-export function getBgmUrl(filename: BgmFile | string = "bgm_loop.mp3"): string {
+export function getBgmUrl(filename: BgmFile | string = "cartoon.mp3"): string {
   return getSupabasePublicUrl(ASSETS_BUCKET, `bgm/${filename}`);
 }
 

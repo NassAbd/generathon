@@ -678,7 +678,7 @@ export function refineKeywordDecorations(
 export function buildHeuristicDecorations(words: WhisperWord[]): LlmDecoration[] {
   const effects = ["bounce", "shake", "glow"] as const;
   const assets = ["fire.png", "rocket.png", "star.png", "lightning.png", "brain.png"] as const;
-  const sfx = ["whoosh.mp3", "shocking.mp3", "fah.mp3", "ding.mp3"] as const;
+  const sfx = ["fah.mp3", "shocking.mp3", "fah.mp3", "shocking.mp3"] as const;
 
   const candidates: LlmDecoration[] = words
     .map((entry, index) => ({ index, score: scoreKeywordCandidate(words, index) }))

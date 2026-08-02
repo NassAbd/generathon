@@ -8,8 +8,9 @@ import { ExportCapCutLocalButton } from "@/components/ExportCapCutLocalButton";
 import { ThemeSelector } from "@/components/ThemeSelector";
 import { TranscriptSidebar } from "@/components/TranscriptSidebar";
 import { VideoPlayerOverlay, type VideoPlayerOverlayHandle } from "@/components/VideoPlayerOverlay";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { SpeakerOffsetSegment } from "@/lib/capcut/video-effects";
 import type { ProjectRecord } from "@/lib/projects/fetchProject";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { THEME_PRESETS, type ThemeId } from "@/types/theme";
 
 export interface ProjectViewProps {
@@ -23,6 +24,10 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
   const [sourceVideoWidth, setSourceVideoWidth] = useState<number | undefined>(undefined);
   const [sourceVideoHeight, setSourceVideoHeight] = useState<number | undefined>(undefined);
+  const [speakerOffsetPercentX, setSpeakerOffsetPercentX] = useState<number | undefined>(undefined);
+  const [speakerOffsetSegments, setSpeakerOffsetSegments] = useState<SpeakerOffsetSegment[] | undefined>(
+    undefined,
+  );
 
   const transcript = project.transcript_data ?? [];
   const themePreset = THEME_PRESETS[theme];
@@ -64,6 +69,8 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
             themeId={theme}
             sourceVideoWidth={sourceVideoWidth}
             sourceVideoHeight={sourceVideoHeight}
+            speakerOffsetPercentX={speakerOffsetPercentX}
+            speakerOffsetSegments={speakerOffsetSegments}
           />
           <CopyShareLinkButton projectId={project.id} />
         </div>
@@ -77,11 +84,14 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
               videoUrl={project.video_url}
               transcript={transcript}
               theme={theme}
+              bgmUrl={project.selected_bgm_url ?? undefined}
               onActiveWordChange={setActiveWordIndex}
               onVideoDimensionsChange={(width, height) => {
                 setSourceVideoWidth(width);
                 setSourceVideoHeight(height);
               }}
+              onSpeakerOffsetChange={setSpeakerOffsetPercentX}
+              onSpeakerOffsetSegmentsChange={setSpeakerOffsetSegments}
               className="h-full max-h-[calc(100vh-11rem)] w-auto"
             />
           </div>

@@ -1,4 +1,5 @@
 import { countHighlights, decorateTranscript } from "@/lib/ai/decorate-transcript";
+import { getOrAssignProjectBgmTrack } from "@/lib/assets/bgm";
 import { transcribeVideoUrl } from "@/lib/groq/transcribe";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { ProcessVideoRequest, ProcessVideoResponse, TranscriptData } from "@/types/transcript";
@@ -12,6 +13,8 @@ async function updateProjectStatus(
   extra?: {
     transcript_data?: TranscriptData;
     duration_seconds?: number | null;
+    selected_bgm_track?: string;
+    selected_bgm_url?: string;
   },
 ): Promise<void> {
   const supabase = getSupabaseServerClient();
@@ -43,7 +46,14 @@ export async function POST(request: Request): Promise<Response> {
     projectId = body.projectId;
     const { videoUrl } = body;
 
-    await updateProjectStatus(projectId, "transcribing");
+    // Assign BGM once at transcription start and persist on the project row so
+    // web preview and CapCut export always share the exact same track.
+    const bgmTrack = await getOrAssignProjectBgmTrack(projectId);
+
+    await updateProjectStatus(projectId, "transcribing", {
+      selected_bgm_track: bgmTrack.filename,
+      selected_bgm_url: bgmTrack.url,
+    });
 
     const { words, durationSeconds } = await transcribeVideoUrl(videoUrl);
 
@@ -54,6 +64,8 @@ export async function POST(request: Request): Promise<Response> {
     await updateProjectStatus(projectId, "completed", {
       transcript_data: transcriptData,
       duration_seconds: durationSeconds,
+      selected_bgm_track: bgmTrack.filename,
+      selected_bgm_url: bgmTrack.url,
     });
 
     const response: ProcessVideoResponse = {

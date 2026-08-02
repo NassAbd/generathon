@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import { NextRequest } from "next/server";
 
+import { bgmTrackFromStoredFields, getOrAssignProjectBgmTrack } from "@/lib/assets/bgm";
 import { buildCapCutDraft } from "@/lib/capcut/exportDraft";
 import { fetchProjectById } from "@/lib/projects/fetchProject";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -26,6 +27,12 @@ async function buildExportZip(
     project.transcript_data.reduce((maxEnd, entry) => Math.max(maxEnd, entry.end), 0);
 
   const exportTheme: ThemeId = resolveExportThemeId(requestThemeId, project.theme);
+
+  // Exact stored BGM — never recompute a separate assignment at export time.
+  const bgmTrack =
+    bgmTrackFromStoredFields(project.selected_bgm_track, project.selected_bgm_url) ??
+    (await getOrAssignProjectBgmTrack(project.id));
+
   const { draftContent, readme } = buildCapCutDraft({
     projectId: project.id,
     projectName: `Motion Decorator ${project.id.slice(0, 8)}`,
@@ -33,6 +40,8 @@ async function buildExportZip(
     transcript: project.transcript_data,
     durationSeconds,
     theme: exportTheme,
+    bgmUrl: bgmTrack.url,
+    applySidechainDucking: false,
   });
 
   const zip = new JSZip();

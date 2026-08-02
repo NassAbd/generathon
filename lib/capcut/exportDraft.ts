@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -6,17 +6,19 @@ import {
   CAPCUT_EXPORT_AUDIO,
   getCapCutTextMaterialProps,
   getSubtitlePreset,
-  resolveKeywordSfxUrl,
+  sanitizeCapCutSubtitleSegmentPlans,
+  type CapCutSubtitleSegmentPlan,
   type SubtitleStylePreset,
 } from "@/lib/capcut/presets";
 import {
-  CAPCUT_BACKGROUND_BLUR,
-  CAPCUT_BACKGROUND_BRIGHTNESS,
   CAPCUT_CANVAS_HEIGHT,
   CAPCUT_CANVAS_RATIO,
   CAPCUT_CANVAS_WIDTH,
-  computeBackgroundCoverScale,
-  needsBackgroundBlurLayer,
+  computeSpeakerTrackingLayout,
+  needsVerticalCropReframe,
+  normalizeSpeakerOffsetSegments,
+  type SpeakerOffsetSegment,
+  type SpeakerTrackingLayout,
 } from "@/lib/capcut/video-effects";
 import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
@@ -37,6 +39,17 @@ export interface CapCutExportInput {
   sourceVideoWidth?: number;
   /** Source pixel height; defaults to 1920 (vertical-first). */
   sourceVideoHeight?: number;
+  /** Face-tracked horizontal pan (-50 … +50) for vertical crop reframing. */
+  speakerOffsetPercentX?: number;
+  /** Per-phrase/shot pan segments; splits the main video track when offsets differ. */
+  speakerOffsetSegments?: SpeakerOffsetSegment[];
+  /** Deterministically assigned BGM URL (modulo catalog). Falls back to default. */
+  bgmUrl?: string;
+  /**
+   * When true (default for local write), mix video+BGM with FFmpeg sidechain ducking
+   * and omit the separate CapCut BGM track to avoid double music.
+   */
+  applySidechainDucking?: boolean;
 }
 
 export interface CapCutDraftBundle {
@@ -95,7 +108,6 @@ function createEmptyMaterials(): DraftRecord {
     video_effects: [],
     material_animations: [],
     transitions: [],
-    masks: [],
     chromas: [],
     audio_fades: [],
     audio_effects: [],
@@ -252,6 +264,67 @@ function applyTextSegmentLayout(textSegment: DraftRecord, preset: SubtitleStyleP
   textSegment.uniform_scale = { on: true, value: preset.textScale };
 }
 
+/**
+ * Places every subtitle on ONE text track with non-overlapping timeranges.
+ * Shared track_render_index / track_attribute prevent CapCut from auto-stacking.
+ */
+function appendSubtitleSegmentsToSingleTrack(
+  textTrack: DraftRecord,
+  materials: DraftRecord,
+  plans: CapCutSubtitleSegmentPlan[],
+  preset: SubtitleStylePreset,
+): void {
+  const trackId = String(textTrack.id);
+  textTrack.type = "text";
+  textTrack.attribute = 0;
+  textTrack.flag = 0;
+  textTrack.segments = [];
+
+  const TEXT_TRACK_RENDER_INDEX = 0;
+  const TEXT_SEGMENT_RENDER_INDEX = 15000;
+
+  for (let index = 0; index < plans.length; index += 1) {
+    const plan = plans[index];
+    const startMicros = plan.startMicros;
+    let durationMicros = plan.durationMicros;
+
+    if (index + 1 < plans.length) {
+      const nextStart = plans[index + 1].startMicros;
+      if (startMicros + durationMicros > nextStart) {
+        durationMicros = Math.max(0, nextStart - startMicros);
+      }
+    }
+
+    if (durationMicros <= 0) {
+      continue;
+    }
+
+    const textMaterialId = uuid();
+    pushMaterial(materials, "texts", {
+      id: textMaterialId,
+      ...getCapCutTextMaterialProps(plan.phraseWords, preset),
+    });
+
+    const textCompanions = createCompanionMaterials("text");
+    registerCompanions(materials, textCompanions);
+    const textSegment = baseSegment(
+      uuid(),
+      textMaterialId,
+      trackId,
+      { start: startMicros, duration: durationMicros },
+      textCompanions.ids,
+      TEXT_SEGMENT_RENDER_INDEX,
+    );
+    textSegment.target_timerange = { start: startMicros, duration: durationMicros };
+    textSegment.source_timerange = { start: 0, duration: durationMicros };
+    textSegment.track_render_index = TEXT_TRACK_RENDER_INDEX;
+    textSegment.track_attribute = 0;
+    textSegment.raw_segment_id = trackId;
+    applyTextSegmentLayout(textSegment, preset);
+    (textTrack.segments as DraftRecord[]).push(textSegment);
+  }
+}
+
 function logTextSegmentScaleSample(draft: CapCutDraftContent): void {
   const textTrack = draft.tracks.find((track) => track.type === "text");
   if (!textTrack || !Array.isArray(textTrack.segments) || textTrack.segments.length === 0) {
@@ -276,6 +349,129 @@ function logTextSegmentScaleSample(draft: CapCutDraftContent): void {
     uniform_scale: sampleSegment.uniform_scale,
     segment_count: textTrack.segments.length,
   });
+}
+
+interface TimedVideoSegmentOptions {
+  sourceStartMicros?: number;
+  volume?: number;
+  renderIndex?: number;
+}
+
+/** CapCut export uses single-track framing; wide/split shots fall back to center crop. */
+function resolveExportOffsetPercentX(segment: SpeakerOffsetSegment): number {
+  if (segment.layoutType === "split-screen") {
+    return 0;
+  }
+
+  return segment.offsetPercentX;
+}
+
+function applyMainVideoClipLayout(
+  videoSegment: DraftRecord,
+  layout: SpeakerTrackingLayout,
+): void {
+  const mainVideoClip = videoSegment.clip as DraftRecord;
+  mainVideoClip.alpha = 1;
+  mainVideoClip.transform = {
+    x: layout.capcutTransformX,
+    y: 0,
+  };
+  mainVideoClip.scale = {
+    x: layout.coverScale,
+    y: layout.coverScale,
+  };
+  videoSegment.visible = true;
+  videoSegment.volume = 1;
+  videoSegment.uniform_scale = { on: true, value: layout.coverScale };
+}
+
+function appendTimedVideoSegment(
+  videoTrack: DraftRecord,
+  materials: DraftRecord,
+  videoMaterialId: string,
+  startMicros: number,
+  segmentDurationMicros: number,
+  applyLayout: (segment: DraftRecord) => void,
+  options: TimedVideoSegmentOptions = {},
+): void {
+  const sourceStartMicros = options.sourceStartMicros ?? startMicros;
+  const renderIndex = options.renderIndex ?? 14000;
+
+  const videoCompanions = createCompanionMaterials("video");
+  registerCompanions(materials, videoCompanions);
+
+  const companionIds = [...videoCompanions.ids];
+  const videoSegment = baseSegment(
+    uuid(),
+    videoMaterialId,
+    String(videoTrack.id),
+    { start: startMicros, duration: segmentDurationMicros },
+    companionIds,
+    renderIndex,
+  );
+  videoSegment.target_timerange = { start: startMicros, duration: segmentDurationMicros };
+  videoSegment.source_timerange = { start: sourceStartMicros, duration: segmentDurationMicros };
+  if (options.volume !== undefined) {
+    videoSegment.volume = options.volume;
+  }
+  applyLayout(videoSegment);
+  (videoTrack.segments as DraftRecord[]).push(videoSegment);
+}
+
+function appendMainVideoSegments(
+  mainVideoTrack: DraftRecord,
+  materials: DraftRecord,
+  videoMaterialId: string,
+  sourceVideoWidth: number,
+  sourceVideoHeight: number,
+  durationSeconds: number,
+  durationMicros: number,
+  speakerOffsetSegments: SpeakerOffsetSegment[] | undefined,
+  legacySpeakerOffsetPercentX: number | undefined,
+): SpeakerTrackingLayout {
+  const normalizedSegments = normalizeSpeakerOffsetSegments(speakerOffsetSegments ?? [], durationSeconds);
+  const needsReframe = needsVerticalCropReframe(sourceVideoWidth, sourceVideoHeight);
+
+  if (!needsReframe || normalizedSegments.length === 0) {
+    const layout = computeSpeakerTrackingLayout(
+      sourceVideoWidth,
+      sourceVideoHeight,
+      legacySpeakerOffsetPercentX ?? 0,
+    );
+    appendTimedVideoSegment(
+      mainVideoTrack,
+      materials,
+      videoMaterialId,
+      0,
+      durationMicros,
+      (segment) => applyMainVideoClipLayout(segment, layout),
+    );
+    return layout;
+  }
+
+  let referenceLayout = computeSpeakerTrackingLayout(sourceVideoWidth, sourceVideoHeight, 0);
+
+  for (const segment of normalizedSegments) {
+    const startMicros = toMicroseconds(segment.startSeconds);
+    const segmentDurationMicros = toMicroseconds(segment.endSeconds - segment.startSeconds);
+    const layout = computeSpeakerTrackingLayout(
+      sourceVideoWidth,
+      sourceVideoHeight,
+      resolveExportOffsetPercentX(segment),
+    );
+    referenceLayout = layout;
+
+    appendTimedVideoSegment(
+      mainVideoTrack,
+      materials,
+      videoMaterialId,
+      startMicros,
+      segmentDurationMicros,
+      (videoSegment) => applyMainVideoClipLayout(videoSegment, layout),
+    );
+  }
+
+  return referenceLayout;
 }
 
 function defaultCrop(): DraftRecord {
@@ -390,8 +586,16 @@ function appendAudioSegment(
     audioCompanions.ids,
     options.renderIndex,
   );
+  audioSegment.target_timerange = {
+    start: options.startMicros,
+    duration: options.durationMicros,
+  };
+  audioSegment.source_timerange = { start: 0, duration: options.durationMicros };
   audioSegment.clip = null;
+  // CapCut reads segment.volume (0–1 linear). Also set last_nonzero_volume so the
+  // UI slider opens at ~12–15% instead of snapping back to 100%.
   audioSegment.volume = options.volume;
+  audioSegment.last_nonzero_volume = options.volume;
   (audioTrack.segments as DraftRecord[]).push(audioSegment);
 }
 
@@ -414,18 +618,7 @@ function collectMediaDownloadItems(projectData: CapCutProjectData): MediaDownloa
   };
 
   addItem(projectData.videoUrl, "video", true);
-  addItem(CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL, "audio");
-  addItem(CAPCUT_EXPORT_AUDIO.SFX_POP_URL, "audio");
-  addItem(CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL, "audio");
-  addItem(CAPCUT_EXPORT_AUDIO.SFX_FAH_URL, "audio");
-
-  for (const entry of projectData.transcript) {
-    if (!entry.highlight) {
-      continue;
-    }
-
-    addItem(resolveKeywordSfxUrl(entry.sfx_url), "audio");
-  }
+  addItem(projectData.bgmUrl ?? CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL, "audio");
 
   return items;
 }
@@ -811,11 +1004,7 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
   const materials = createEmptyMaterials();
   const sourceVideoWidth = input.sourceVideoWidth ?? 1080;
   const sourceVideoHeight = input.sourceVideoHeight ?? 1920;
-  const needsBackgroundBlur = needsBackgroundBlurLayer(sourceVideoWidth, sourceVideoHeight);
 
-  const backgroundVideoTrack = needsBackgroundBlur
-    ? createTrack("video", "Background Video")
-    : null;
   const videoTrack = createTrack("video", "Main Video");
   const textTrack = createTrack("text", "Kinetic Subtitles");
   const sfxTrack = createTrack("audio", "SFX");
@@ -867,105 +1056,47 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     },
   });
 
-  if (backgroundVideoTrack) {
-    const backgroundCoverScale = computeBackgroundCoverScale(sourceVideoWidth, sourceVideoHeight);
-    const backgroundCompanions = createCompanionMaterials("video", {
-      canvasBlur: CAPCUT_BACKGROUND_BLUR,
-    });
-    registerCompanions(materials, backgroundCompanions);
-    const backgroundSegment = baseSegment(
-      uuid(),
-      videoMaterialId,
-      String(backgroundVideoTrack.id),
-      { start: 0, duration: durationMicros },
-      backgroundCompanions.ids,
-      13000,
-    );
-    const backgroundClip = backgroundSegment.clip as DraftRecord;
-    backgroundClip.scale = {
-      x: backgroundCoverScale,
-      y: backgroundCoverScale,
-    };
-    backgroundSegment.uniform_scale = {
-      on: true,
-      value: backgroundCoverScale,
-    };
-    backgroundClip.alpha = CAPCUT_BACKGROUND_BRIGHTNESS;
-    (backgroundVideoTrack.segments as DraftRecord[]).push(backgroundSegment);
-  }
-
-  const videoCompanions = createCompanionMaterials("video");
-  registerCompanions(materials, videoCompanions);
-  const videoSegment = baseSegment(
-    uuid(),
+  const speakerLayout = appendMainVideoSegments(
+    videoTrack,
+    materials,
     videoMaterialId,
-    String(videoTrack.id),
-    { start: 0, duration: durationMicros },
-    videoCompanions.ids,
-    14000,
+    sourceVideoWidth,
+    sourceVideoHeight,
+    input.durationSeconds,
+    durationMicros,
+    input.speakerOffsetSegments,
+    input.speakerOffsetPercentX,
   );
-
-  (videoTrack.segments as DraftRecord[]).push(videoSegment);
-  const mainVideoClip = videoSegment.clip as DraftRecord;
-  mainVideoClip.transform = { x: 0, y: 0 };
-  mainVideoClip.scale = { x: 1, y: 1 };
-  videoSegment.uniform_scale = { on: true, value: 1 };
 
   const subtitlePreset = getSubtitlePreset(input.theme);
-  const subtitleSegmentPlans = buildCapCutSubtitleSegmentPlans(
-    input.transcript,
-    subtitlePreset,
-    toMicroseconds,
+  const subtitleSegmentPlans = sanitizeCapCutSubtitleSegmentPlans(
+    buildCapCutSubtitleSegmentPlans(input.transcript, subtitlePreset, toMicroseconds),
   );
 
-  for (const plan of subtitleSegmentPlans) {
-    const entry = input.transcript[plan.wordIndex];
-    const startMicros = plan.startMicros;
-    const duration = plan.durationMicros;
+  appendSubtitleSegmentsToSingleTrack(
+    textTrack,
+    materials,
+    subtitleSegmentPlans,
+    subtitlePreset,
+  );
 
-    const textMaterialId = uuid();
+  // SFX track intentionally left empty — export focuses on framing + subtitles.
 
-    pushMaterial(materials, "texts", {
-      id: textMaterialId,
-      ...getCapCutTextMaterialProps(plan.phraseWords, subtitlePreset),
-    });
+  const bgmUrl = input.bgmUrl ?? CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL;
 
-    const textCompanions = createCompanionMaterials("text");
-    registerCompanions(materials, textCompanions);
-    const textSegment = baseSegment(
-      uuid(),
-      textMaterialId,
-      String(textTrack.id),
-      { start: startMicros, duration },
-      textCompanions.ids,
-      15000,
-    );
-    applyTextSegmentLayout(textSegment, subtitlePreset);
-    (textTrack.segments as DraftRecord[]).push(textSegment);
-
-    if (entry.highlight) {
-      const keywordStartMicros = toMicroseconds(entry.start);
-      appendAudioSegment(materials, sfxTrack, {
-        url: resolveKeywordSfxUrl(entry.sfx_url),
-        startMicros: keywordStartMicros,
-        durationMicros: CAPCUT_EXPORT_AUDIO.sfxClipDurationMicros,
-        materialDurationMicros: CAPCUT_EXPORT_AUDIO.sfxClipDurationMicros,
-        volume: CAPCUT_EXPORT_AUDIO.sfxVolume,
-        renderIndex: 11000,
-        filenameFallback: "whoosh.mp3",
-      });
-    }
-  }
-
+  // Always expose BGM as its own CapCut timeline audio track so users can see
+  // and adjust it in the editor (do not omit when FFmpeg ducking was used).
   appendAudioSegment(materials, bgmTrack, {
-    url: CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL,
+    url: bgmUrl,
     startMicros: 0,
     durationMicros: durationMicros,
     materialDurationMicros: durationMicros,
     volume: CAPCUT_EXPORT_AUDIO.bgmVolume,
     renderIndex: 10500,
-    filenameFallback: "lofi_relax.mp3",
+    filenameFallback: filenameFromUrl(bgmUrl, "cartoon.mp3"),
   });
+
+  const tracks = [videoTrack, textTrack, sfxTrack, bgmTrack];
 
   const draftContent: CapCutDraftContent = {
     id: draftId,
@@ -986,18 +1117,15 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       app_version: "9.0.0",
       os: "mac",
     },
-    tracks: [
-      ...(backgroundVideoTrack ? [backgroundVideoTrack] : []),
-      videoTrack,
-      textTrack,
-      sfxTrack,
-      bgmTrack,
-    ],
+    tracks,
     materials,
     extra_info: {
       created_via: "motion-decorator",
       project_id: input.projectId,
       theme: input.theme,
+      bgm_url: bgmUrl,
+      sidechain_ducking: input.applySidechainDucking === true,
+      separate_bgm_track: true,
     },
     free_render_index_mode_on: false,
   };
@@ -1019,10 +1147,12 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     "5. Reopen CapCut and relink any missing media if prompted.",
     "",
     "Timeline units: microseconds (1 second = 1,000,000).",
-    needsBackgroundBlur
-      ? "Timeline tracks: Background Video (blur), Main Video (contain), Kinetic Subtitles, SFX, Background Music."
-      : "Timeline tracks: Main Video, Kinetic Subtitles, SFX, Background Music.",
-    "Audio mix: BGM ~12%, keyword SFX ~80%.",
+    "Timeline tracks: Main Video, Kinetic Subtitles, Background Music (SFX disabled).",
+    speakerLayout.needsReframe
+      ? "Video framing: single-track 9:16 crop; wide/split shots export centered (offset 0%)."
+      : "Video framing: single-track, native aspect.",
+    "Audio mix: separate CapCut BGM track (~12% volume) on its own timeline layer. Keyword SFX generation is disabled.",
+    `Assigned BGM: ${bgmUrl}`,
     "Canvas: 1080 x 1920 (9:16).",
   ].join("\n");
 
@@ -1038,6 +1168,10 @@ export interface CapCutProjectData {
   theme: ThemeId;
   sourceVideoWidth?: number;
   sourceVideoHeight?: number;
+  speakerOffsetPercentX?: number;
+  speakerOffsetSegments?: SpeakerOffsetSegment[];
+  bgmUrl?: string;
+  applySidechainDucking?: boolean;
 }
 
 export interface CapCutDirectWriteResult {
@@ -1053,6 +1187,8 @@ export interface CapCutDirectWriteResult {
   skippedMediaDownloads: MediaDownloadSkip[];
   removedMissingMediaSegments: number;
   removedMissingMediaMaterials: number;
+  bgmUrl: string;
+  sidechainDuckingApplied: boolean;
 }
 
 const GENERATED_MATERIAL_BUCKETS = [
@@ -1075,10 +1211,6 @@ const GENERATED_MATERIAL_BUCKETS = [
   "smart_crops",
   "manual_deformations",
 ] as const;
-
-const MATERIAL_BUCKET_ALIASES: Record<string, string> = {
-  masks: "common_mask",
-};
 
 const DRAFT_INFO_SEGMENT_BASE: DraftRecord = {
   render_timerange: { start: 0, duration: 0 },
@@ -1147,6 +1279,13 @@ function enrichClipForDraftInfo(clip: unknown): DraftRecord | null {
 function enrichSegmentForDraftInfo(segment: DraftRecord, trackType: string): DraftRecord {
   const isAudio = trackType === "audio";
   const enrichedClip = enrichClipForDraftInfo(isAudio ? null : segment.clip);
+  const volume = typeof segment.volume === "number" ? segment.volume : 1.0;
+  const lastNonzeroVolume =
+    typeof segment.last_nonzero_volume === "number"
+      ? segment.last_nonzero_volume
+      : volume > 0
+        ? volume
+        : 1.0;
 
   return {
     ...DRAFT_INFO_SEGMENT_BASE,
@@ -1154,7 +1293,8 @@ function enrichSegmentForDraftInfo(segment: DraftRecord, trackType: string): Dra
     speed: typeof segment.speed === "number" ? segment.speed : 1.0,
     reverse: Boolean(segment.reverse),
     visible: segment.visible !== false,
-    volume: typeof segment.volume === "number" ? segment.volume : 1.0,
+    volume,
+    last_nonzero_volume: lastNonzeroVolume,
     enable_lut: !isAudio,
     enable_adjust: !isAudio,
     enable_hsl: !isAudio,
@@ -1364,17 +1504,6 @@ function mergeMaterialsIntoEnvelope(
     );
   }
 
-  for (const [sourceBucket, targetBucket] of Object.entries(MATERIAL_BUCKET_ALIASES)) {
-    const generatedItems = generatedMaterials[sourceBucket];
-    if (!Array.isArray(generatedItems) || generatedItems.length === 0) {
-      continue;
-    }
-
-    merged[targetBucket] = (generatedItems as DraftRecord[]).map((material) =>
-      enrichMaterialForDraftInfo(material, targetBucket),
-    );
-  }
-
   return merged;
 }
 
@@ -1543,21 +1672,72 @@ async function resolveCapCutDraftFolder(capCutRoot: string): Promise<{ folderPat
   };
 }
 
+/**
+ * CapCut timeline exports keep BGM as a separate editable audio layer.
+ * Baking FFmpeg sidechain into the video would either hide that layer or
+ * double the music — so local CapCut write skips burn-in by default.
+ */
+async function tryApplySidechainDuckingToDraftFolder(
+  draftFolderPath: string,
+  projectData: CapCutProjectData,
+): Promise<{ applied: boolean; duckedVideoPath: string | null }> {
+  // Opt-in only: CapCut path wants a dedicated BGM track, not baked audio.
+  const wantDucking = projectData.applySidechainDucking === true;
+  if (!wantDucking) {
+    return { applied: false, duckedVideoPath: null };
+  }
+
+  const videoFilename = filenameFromUrl(projectData.videoUrl, "source-video.mp4");
+  const bgmUrl = projectData.bgmUrl ?? CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL;
+  const bgmFilename = filenameFromUrl(bgmUrl, "cartoon.mp3");
+  const videoPath = absoluteAssetPath(draftFolderPath, "video", videoFilename);
+  const bgmPath = absoluteAssetPath(draftFolderPath, "audio", bgmFilename);
+
+  if (!(await pathExists(videoPath)) || !(await pathExists(bgmPath))) {
+    console.warn("[FFmpeg] Skipping sidechain ducking — video or BGM file missing locally.");
+    return { applied: false, duckedVideoPath: null };
+  }
+
+  try {
+    const { defaultDuckedOutputPath, mixVideoWithSidechainDucking } = await import(
+      "@/lib/ffmpeg/mixWithSidechainDucking"
+    );
+    const duckedVideoPath = defaultDuckedOutputPath(videoPath);
+    await mixVideoWithSidechainDucking({
+      videoPath,
+      bgmPath,
+      outputPath: duckedVideoPath,
+      musicVolume: CAPCUT_EXPORT_AUDIO.sidechainMusicVolume,
+      threshold: 0.05,
+      ratio: 4,
+      attack: 15,
+      release: 350,
+      copyVideo: true,
+    });
+
+    // Replace the source video with the ducked mix (opt-in baked path only).
+    await copyFile(duckedVideoPath, videoPath);
+    return { applied: true, duckedVideoPath };
+  } catch (error: unknown) {
+    console.warn(
+      "[FFmpeg] Sidechain ducking unavailable; CapCut BGM track remains on the timeline.",
+      error instanceof Error ? error.message : error,
+    );
+    return { applied: false, duckedVideoPath: null };
+  }
+}
+
 export async function writeDirectToCapCut(
   projectId: string,
   projectData: CapCutProjectData,
 ): Promise<CapCutDirectWriteResult> {
-  const { draftContent } = buildCapCutDraft({
-    projectId,
-    projectName: projectData.projectName,
-    videoUrl: projectData.videoUrl,
-    transcript: projectData.transcript,
-    durationSeconds: projectData.durationSeconds,
-    theme: projectData.theme,
-    sourceVideoWidth: projectData.sourceVideoWidth,
-    sourceVideoHeight: projectData.sourceVideoHeight,
-  });
-  logTextSegmentScaleSample(draftContent);
+  const bgmUrl = projectData.bgmUrl ?? CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL;
+  const projectDataWithBgm: CapCutProjectData = {
+    ...projectData,
+    bgmUrl,
+    // CapCut draft must keep an explicit BGM timeline layer.
+    applySidechainDucking: false,
+  };
 
   const capCutRoot = getCapCutDraftsRoot();
   const { folderPath: draftFolderPath, usedExistingFolder } = await resolveCapCutDraftFolder(capCutRoot);
@@ -1568,7 +1748,26 @@ export async function writeDirectToCapCut(
   await mkdir(path.join(draftFolderPath, "assets", "video"), { recursive: true });
   await mkdir(path.join(draftFolderPath, "assets", "audio"), { recursive: true });
 
-  const mediaDownload = await downloadDraftMedia(draftFolderPath, projectData);
+  const mediaDownload = await downloadDraftMedia(draftFolderPath, projectDataWithBgm);
+  // Still invoked for opt-in callers; CapCut local path forces ducking off above.
+  const ducking = await tryApplySidechainDuckingToDraftFolder(draftFolderPath, projectDataWithBgm);
+
+  const { draftContent } = buildCapCutDraft({
+    projectId,
+    projectName: projectData.projectName,
+    videoUrl: projectData.videoUrl,
+    transcript: projectData.transcript,
+    durationSeconds: projectData.durationSeconds,
+    theme: projectData.theme,
+    sourceVideoWidth: projectData.sourceVideoWidth,
+    sourceVideoHeight: projectData.sourceVideoHeight,
+    speakerOffsetPercentX: projectData.speakerOffsetPercentX,
+    speakerOffsetSegments: projectData.speakerOffsetSegments,
+    bgmUrl,
+    applySidechainDucking: false,
+  });
+  logTextSegmentScaleSample(draftContent);
+
   await applyAbsoluteMediaPaths(draftContent, draftFolderPath);
   const mediaFilter = await filterDraftToExistingMedia(draftContent, draftFolderPath);
 
@@ -1587,6 +1786,10 @@ export async function writeDirectToCapCut(
     await writeFile(timelineDraftInfoPath, mergedJson, "utf8");
   }
 
+  console.log(
+    `[BGM Selection] CapCut draft includes separate BGM track → ${filenameFromUrl(bgmUrl, "cartoon.mp3")} @ volume ${CAPCUT_EXPORT_AUDIO.bgmVolume}`,
+  );
+
   return {
     draftId: typeof mergedDraftInfo.id === "string" ? mergedDraftInfo.id : draftContent.id,
     draftFolderPath,
@@ -1600,5 +1803,7 @@ export async function writeDirectToCapCut(
     skippedMediaDownloads: mediaDownload.skipped,
     removedMissingMediaSegments: mediaFilter.removedSegmentCount,
     removedMissingMediaMaterials: mediaFilter.removedMaterialCount,
+    bgmUrl,
+    sidechainDuckingApplied: ducking.applied,
   };
 }

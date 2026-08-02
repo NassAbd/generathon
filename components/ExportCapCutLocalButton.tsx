@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import type { SpeakerOffsetSegment } from "@/lib/capcut/video-effects";
 import type { ThemeId } from "@/types/theme";
 
 export interface ExportCapCutLocalButtonProps {
@@ -9,6 +10,8 @@ export interface ExportCapCutLocalButtonProps {
   themeId: ThemeId;
   sourceVideoWidth?: number;
   sourceVideoHeight?: number;
+  speakerOffsetPercentX?: number;
+  speakerOffsetSegments?: SpeakerOffsetSegment[];
 }
 
 export function ExportCapCutLocalButton({
@@ -16,6 +19,8 @@ export function ExportCapCutLocalButton({
   themeId,
   sourceVideoWidth,
   sourceVideoHeight,
+  speakerOffsetPercentX,
+  speakerOffsetSegments,
 }: ExportCapCutLocalButtonProps): JSX.Element {
   const [isExporting, setIsExporting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -35,6 +40,8 @@ export function ExportCapCutLocalButton({
           themeId,
           ...(sourceVideoWidth !== undefined ? { sourceVideoWidth } : {}),
           ...(sourceVideoHeight !== undefined ? { sourceVideoHeight } : {}),
+          ...(speakerOffsetPercentX !== undefined ? { speakerOffsetPercentX } : {}),
+          ...(speakerOffsetSegments !== undefined ? { speakerOffsetSegments } : {}),
         }),
       });
 

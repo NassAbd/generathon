@@ -1,5 +1,6 @@
 import type { TranscriptData } from "@/types/transcript";
 import type { ThemeId } from "@/types/theme";
+import type { SpeakerOffsetSegment } from "@/lib/capcut/video-effects";
 
 export type RgbColor = [number, number, number];
 
@@ -368,7 +369,77 @@ export interface CapCutSubtitleSegmentPlan {
   phraseWords: PhraseWord[];
 }
 
-/** Builds strictly non-overlapping subtitle segment timings (one visible text clip at a time). */
+/**
+ * Sorts subtitle plans chronologically and clamps each segment so
+ * `end[i] <= start[i+1]` with zero micro-overlap (CapCut-safe single track).
+ */
+export function sanitizeCapCutSubtitleSegmentPlans(
+  plans: CapCutSubtitleSegmentPlan[],
+): CapCutSubtitleSegmentPlan[] {
+  if (plans.length === 0) {
+    return [];
+  }
+
+  const sorted = [...plans].sort((left, right) => {
+    if (left.startMicros !== right.startMicros) {
+      return left.startMicros - right.startMicros;
+    }
+    return left.wordIndex - right.wordIndex;
+  });
+
+  const sanitized: CapCutSubtitleSegmentPlan[] = [];
+
+  for (let index = 0; index < sorted.length; index += 1) {
+    const plan = sorted[index];
+    let startMicros = Math.max(0, plan.startMicros);
+
+    if (sanitized.length > 0) {
+      const previous = sanitized[sanitized.length - 1];
+      const previousEnd = previous.startMicros + previous.durationMicros;
+      if (startMicros < previousEnd) {
+        startMicros = previousEnd;
+      }
+    }
+
+    const nextStartMicros =
+      index + 1 < sorted.length ? sorted[index + 1].startMicros : Number.POSITIVE_INFINITY;
+
+    let endMicros = Math.min(plan.startMicros + plan.durationMicros, nextStartMicros);
+
+    if (endMicros <= startMicros) {
+      if (!Number.isFinite(nextStartMicros) || nextStartMicros <= startMicros) {
+        continue;
+      }
+      endMicros = Math.min(startMicros + MIN_SUBTITLE_SEGMENT_MICROS, nextStartMicros);
+    }
+
+    if (endMicros <= startMicros) {
+      continue;
+    }
+
+    sanitized.push({
+      ...plan,
+      startMicros,
+      durationMicros: endMicros - startMicros,
+      phraseWords: plan.phraseWords,
+    });
+  }
+
+  // Final pass: hard-clamp any residual overlap from equal/unsorted starts.
+  for (let index = 0; index < sanitized.length - 1; index += 1) {
+    const current = sanitized[index];
+    const next = sanitized[index + 1];
+    const currentEnd = current.startMicros + current.durationMicros;
+
+    if (currentEnd > next.startMicros) {
+      current.durationMicros = Math.max(0, next.startMicros - current.startMicros);
+    }
+  }
+
+  return sanitized.filter((plan) => plan.durationMicros > 0);
+}
+
+/** Builds strictly non-overlapping subtitle segment timings aligned to transcript word starts. */
 export function buildCapCutSubtitleSegmentPlans(
   transcript: TranscriptData,
   preset: SubtitleStylePreset,
@@ -378,37 +449,52 @@ export function buildCapCutSubtitleSegmentPlans(
     return [];
   }
 
-  const plans: CapCutSubtitleSegmentPlan[] = [];
-  let chainEndMicros = 0;
+  const chronological = transcript
+    .map((entry, wordIndex) => ({ entry, wordIndex }))
+    .sort((left, right) => {
+      if (left.entry.start !== right.entry.start) {
+        return left.entry.start - right.entry.start;
+      }
+      return left.wordIndex - right.wordIndex;
+    });
 
-  for (let index = 0; index < transcript.length; index += 1) {
-    const entry = transcript[index];
-    const wordStartMicros = toMicroseconds(entry.start);
+  const plans: CapCutSubtitleSegmentPlan[] = [];
+
+  for (let index = 0; index < chronological.length; index += 1) {
+    const { entry, wordIndex } = chronological[index];
+    const startMicros = toMicroseconds(entry.start);
     const wordEndMicros = toMicroseconds(entry.end);
 
-    const startMicros =
-      index === 0 ? wordStartMicros : Math.max(wordStartMicros, chainEndMicros);
-
-    let endMicros = Math.max(wordEndMicros, startMicros + MIN_SUBTITLE_SEGMENT_MICROS);
-    if (index < transcript.length - 1) {
-      const nextStartMicros = toMicroseconds(transcript[index + 1].start);
+    let endMicros = wordEndMicros;
+    if (index < chronological.length - 1) {
+      const nextStartMicros = toMicroseconds(chronological[index + 1].entry.start);
       endMicros = Math.min(endMicros, nextStartMicros);
     }
 
     if (endMicros <= startMicros) {
-      endMicros = startMicros + MIN_SUBTITLE_SEGMENT_MICROS;
+      const nextStartMicros =
+        index < chronological.length - 1
+          ? toMicroseconds(chronological[index + 1].entry.start)
+          : startMicros + MIN_SUBTITLE_SEGMENT_MICROS;
+      if (nextStartMicros <= startMicros) {
+        continue;
+      }
+      endMicros = Math.min(startMicros + MIN_SUBTITLE_SEGMENT_MICROS, nextStartMicros);
     }
 
-    chainEndMicros = endMicros;
+    if (endMicros <= startMicros) {
+      continue;
+    }
+
     plans.push({
-      wordIndex: index,
+      wordIndex,
       startMicros,
       durationMicros: endMicros - startMicros,
-      phraseWords: getPhraseWordsForIndex(transcript, index, preset),
+      phraseWords: getPhraseWordsForIndex(transcript, wordIndex, preset),
     });
   }
 
-  return plans;
+  return sanitizeCapCutSubtitleSegmentPlans(plans);
 }
 
 export type StyleDraftRecord = Record<string, unknown>;
@@ -496,23 +582,37 @@ export function getWebSubtitleWordStyle(
 
 /** CapCut export sound design — live Supabase public URLs and mix levels. */
 export const CAPCUT_EXPORT_AUDIO = {
-  SFX_POP_URL:
+  SFX_WHOOSH_URL:
     "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/whoosh.mp3",
   SFX_SHOCKING_URL:
     "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/shocking.mp3",
   SFX_FAH_URL:
     "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/fah.mp3",
+  /** @deprecated Use SFX_WHOOSH_URL */
+  SFX_POP_URL:
+    "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/whoosh.mp3",
+  /** Fallback when modulo Supabase assignment is unavailable. Prefer resolveBgmTrackForProject(). */
   DEFAULT_BGM_URL:
-    "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/bgm/lofi_relax.mp3",
+    "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/bgm/cartoon.mp3",
+  /**
+   * CapCut timeline BGM level (segment.volume / last_nonzero_volume, 0–1 linear).
+   * ~12% so CapCut's native volume slider opens pre-adjusted, not at 100%.
+   */
   bgmVolume: 0.12,
+  /** FFmpeg sidechain base music gain before ducking. */
+  sidechainMusicVolume: 0.15,
   sfxVolume: 0.8,
-  /** Max keyword SFX clip length on the timeline (microseconds). */
+  /** Minimum gap between SFX triggers (seconds). */
+  sfxCooldownSeconds: 1.5,
+  /** Max SFX clip length on the timeline (microseconds). */
   sfxClipDurationMicros: 500_000,
 } as const;
 
+export type SfxEventKind = "hook" | "shot-cut" | "keyword" | "keyword-strong";
+
 const SFX_URL_BY_FILENAME: Record<string, string> = {
-  "whoosh.mp3": CAPCUT_EXPORT_AUDIO.SFX_POP_URL,
-  "pop.mp3": CAPCUT_EXPORT_AUDIO.SFX_POP_URL,
+  "whoosh.mp3": CAPCUT_EXPORT_AUDIO.SFX_WHOOSH_URL,
+  "pop.mp3": CAPCUT_EXPORT_AUDIO.SFX_WHOOSH_URL,
   "shocking.mp3": CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL,
   "fah.mp3": CAPCUT_EXPORT_AUDIO.SFX_FAH_URL,
 };
@@ -526,9 +626,35 @@ function extractAudioFilename(urlOrFilename: string): string | null {
   }
 }
 
-export function resolveKeywordSfxUrl(sfxUrl: string | undefined): string {
+export function resolveSfxUrlForEvent(kind: SfxEventKind): string {
+  switch (kind) {
+    case "hook":
+    case "keyword-strong":
+      return CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL;
+    case "shot-cut":
+      return CAPCUT_EXPORT_AUDIO.SFX_WHOOSH_URL;
+    case "keyword":
+      return CAPCUT_EXPORT_AUDIO.SFX_FAH_URL;
+  }
+}
+
+/** Maps yellow punchword highlights — fah by default, shocking every 3rd keyword. */
+export function resolveKeywordHighlightSfxUrl(highlightIndex: number): string {
+  return highlightIndex % 3 === 2
+    ? CAPCUT_EXPORT_AUDIO.SFX_SHOCKING_URL
+    : CAPCUT_EXPORT_AUDIO.SFX_FAH_URL;
+}
+
+export function resolveKeywordSfxUrl(
+  sfxUrl: string | undefined,
+  highlightIndex?: number,
+): string {
+  if (highlightIndex !== undefined) {
+    return resolveKeywordHighlightSfxUrl(highlightIndex);
+  }
+
   if (!sfxUrl) {
-    return CAPCUT_EXPORT_AUDIO.SFX_POP_URL;
+    return CAPCUT_EXPORT_AUDIO.SFX_FAH_URL;
   }
 
   const filename = extractAudioFilename(sfxUrl);
@@ -537,4 +663,74 @@ export function resolveKeywordSfxUrl(sfxUrl: string | undefined): string {
   }
 
   return sfxUrl;
+}
+
+export interface CapCutSfxSegmentPlan {
+  startMicros: number;
+  url: string;
+  kind: SfxEventKind;
+}
+
+function applySfxCooldown<T extends { startMicros: number }>(
+  events: T[],
+  cooldownMicros: number,
+): T[] {
+  const sorted = [...events].sort((left, right) => left.startMicros - right.startMicros);
+  const kept: T[] = [];
+  let lastKeptMicros = -Infinity;
+
+  for (const event of sorted) {
+    if (event.startMicros - lastKeptMicros >= cooldownMicros) {
+      kept.push(event);
+      lastKeptMicros = event.startMicros;
+    }
+  }
+
+  return kept;
+}
+
+/** Builds hook, shot-cut, and keyword SFX plans with anti-spam cooldown. */
+export function buildCapCutSfxSegmentPlans(
+  transcript: TranscriptData,
+  speakerOffsetSegments: SpeakerOffsetSegment[] | undefined,
+  toMicroseconds: (seconds: number) => number,
+): CapCutSfxSegmentPlan[] {
+  const events: CapCutSfxSegmentPlan[] = [
+    {
+      startMicros: 0,
+      url: resolveSfxUrlForEvent("hook"),
+      kind: "hook",
+    },
+  ];
+
+  for (const segment of speakerOffsetSegments ?? []) {
+    if (segment.startSeconds <= 0.05) {
+      continue;
+    }
+
+    events.push({
+      startMicros: toMicroseconds(segment.startSeconds),
+      url: resolveSfxUrlForEvent("shot-cut"),
+      kind: "shot-cut",
+    });
+  }
+
+  let highlightIndex = 0;
+  for (const entry of transcript) {
+    if (!entry.highlight) {
+      continue;
+    }
+
+    events.push({
+      startMicros: toMicroseconds(entry.start),
+      url: resolveKeywordHighlightSfxUrl(highlightIndex),
+      kind: highlightIndex % 3 === 2 ? "keyword-strong" : "keyword",
+    });
+    highlightIndex += 1;
+  }
+
+  return applySfxCooldown(
+    events,
+    toMicroseconds(CAPCUT_EXPORT_AUDIO.sfxCooldownSeconds),
+  );
 }
