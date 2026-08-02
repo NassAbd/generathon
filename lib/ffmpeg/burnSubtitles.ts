@@ -186,12 +186,8 @@ export function buildDrawtextCues(options: {
 
   return plans.map((plan) => {
     const { fullText, displayWords } = buildPhraseTextWithLineBreak(plan.phraseWords, preset);
-    const active = displayWords.find((entry) => entry.isActive || entry.isHighlight);
-    const fontColor = active
-      ? active.isHighlight
-        ? preset.keywordAccentColor
-        : preset.activeColor
-      : preset.inactiveColor;
+    const active = displayWords.find((entry) => entry.isActive);
+    const fontColor = active ? preset.activeColor : preset.inactiveColor;
 
     return {
       startSeconds: microsToSeconds(plan.startMicros),

@@ -150,9 +150,7 @@ function drawRoundedRect(
 }
 
 function wordColor(entry: PhraseWord, preset: SubtitleStylePreset): string {
-  if (entry.isHighlight) {
-    return preset.keywordAccentColor;
-  }
+  // Karaoke: currently spoken word uses theme accent.
   if (entry.isActive) {
     return preset.activeColor;
   }
@@ -240,7 +238,7 @@ function drawStyledSubtitles(
 
     for (const word of line) {
       const color = wordColor(word, preset);
-      const opacity = word.isActive || word.isHighlight ? 1 : preset.inactiveOpacity;
+      const opacity = word.isActive ? 1 : preset.inactiveOpacity;
       ctx.globalAlpha = opacity;
       ctx.font = font;
       ctx.lineWidth = strokeWidth;
@@ -258,7 +256,7 @@ function drawStyledSubtitles(
 }
 
 /**
- * Client-side Hormozi-style export: canvas frames + mixed audio via MediaRecorder.
+ * Client-side short-form export: canvas frames + mixed audio via MediaRecorder.
  * Avoids server FFmpeg freetype/drawtext entirely.
  */
 export async function exportProjectWithClientCanvas(

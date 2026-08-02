@@ -259,7 +259,7 @@ function baseSegment(
 function applyTextSegmentLayout(textSegment: DraftRecord, preset: SubtitleStylePreset): void {
   const textClip = textSegment.clip as DraftRecord;
   textClip.scale = { x: preset.textScale, y: preset.textScale };
-  // Lower-center on 9:16 canvas (Hormozi / short-form default).
+  // Lower-center on 9:16 canvas (short-form karaoke default).
   textClip.transform = { x: 0.0, y: preset.subtitleY };
   textClip.rotation = 0.0;
   textSegment.uniform_scale = { on: true, value: preset.textScale };

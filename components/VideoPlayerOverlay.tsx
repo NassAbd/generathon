@@ -616,18 +616,13 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
               >
                 {phrase.map((entry) => {
                   const isActive = entry.index === activeWordIndex;
-                  const transcriptWord = normalizedTranscript[entry.index];
 
                   return (
                     <span
                       key={entry.index}
                       className="inline-block"
                       style={{
-                        ...getWebSubtitleWordStyle(
-                          subtitlePreset,
-                          isActive,
-                          transcriptWord.highlight === true,
-                        ),
+                        ...getWebSubtitleWordStyle(subtitlePreset, isActive),
                         fontSize: `${subtitlePreset.webFontSizePx}px`,
                       }}
                     >

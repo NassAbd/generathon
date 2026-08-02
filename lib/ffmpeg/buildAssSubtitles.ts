@@ -41,7 +41,7 @@ function escapeAssText(text: string): string {
 }
 
 function buildAssDialogueText(phraseWords: PhraseWord[], preset: SubtitleStylePreset): string {
-  const accentAss = hexToAssColor(preset.keywordAccentColor);
+  const accentAss = hexToAssColor(preset.activeColor);
   const whiteAss = hexToAssColor(preset.inactiveColor);
   const displays = phraseWords.map((entry) => formatPhraseDisplayWord(entry.word, preset));
   const breakAfter = choosePhraseLineBreakIndex(displays);
@@ -49,7 +49,7 @@ function buildAssDialogueText(phraseWords: PhraseWord[], preset: SubtitleStylePr
   return phraseWords
     .map((entry, index) => {
       const word = escapeAssText(formatPhraseDisplayWord(entry.word, preset));
-      const color = entry.isHighlight || entry.isActive ? accentAss : whiteAss;
+      const color = entry.isActive ? accentAss : whiteAss;
       const colorTag = `{\\c${color}&}`;
       let spacer = "";
       if (index < phraseWords.length - 1) {
@@ -63,7 +63,7 @@ function buildAssDialogueText(phraseWords: PhraseWord[], preset: SubtitleStylePr
 
 /**
  * Builds an ASS script matching the selected theme (lower-center, stroke,
- * soft black box, keyword accents) for FFmpeg burn-in.
+ * soft black box, karaoke accents) for FFmpeg burn-in.
  */
 export function buildAssSubtitles(options: {
   transcript: TranscriptData;
@@ -73,7 +73,7 @@ export function buildAssSubtitles(options: {
   const toMicroseconds = (seconds: number) => Math.round(Math.max(0, seconds) * 1_000_000);
   const plans = buildCapCutSubtitleSegmentPlans(options.transcript, preset, toMicroseconds);
 
-  // ASS Fontsize is roughly CSS px on 1080×1920 (~48–56 for Hormozi look).
+  // ASS Fontsize is roughly CSS px on 1080×1920 (~48–56 for short-form look).
   const assFontSize = Math.round(preset.webFontSizePx * 1.75);
   const primary = hexToAssColor(preset.inactiveColor);
   const outline = hexToAssColor(SHARED_SUBTITLE_TOKENS.strokeColor);

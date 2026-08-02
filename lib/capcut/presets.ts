@@ -11,12 +11,12 @@ export interface SubtitleStylePreset {
   fontFamily: string;
   fontNameCapCut: string;
   fontCategoryCapCut: string;
-  /** Default body text — Hormozi white. */
+  /** Default body text — white. */
   inactiveColor: string;
-  /** Emphasized / current word — typically yellow. */
+  /** Karaoke active-word accent (theme color). */
   activeColor: string;
-  /** Rich-text accent for highlighted keywords (`#FFE600` / `#10B981`). */
-  keywordAccentColor: string;
+  /** Alias of active karaoke accent (kept for CapCut/export callers). */
+  accentColor: string;
   borderColor: string;
   borderWidth: number;
   borderWidthActive: number;
@@ -58,13 +58,17 @@ export interface SubtitleStylePreset {
 }
 
 /**
- * Shared color/surface tokens for CapCut + web + ASS burn-in.
- * CapCut `font_size` uses a tiny draft scale (~5); web uses px separately.
+ * Shared color/surface tokens for CapCut + web preview + client canvas export.
+ * CapCut `font_size` uses draft scale; web/canvas use CSS px separately.
  */
 export const SHARED_SUBTITLE_TOKENS = {
   textWhite: "#FFFFFF",
+  /** Impact Yellow karaoke accent. */
   accentYellow: "#FFE600",
+  /** Cyberpunk Green karaoke accent. */
   accentGreen: "#10B981",
+  /** Editorial Clean karaoke accent. */
+  accentCyan: "#06B6D4",
   strokeColor: "#000000",
   strokeWidth: 0.07,
   backgroundColor: "#000000",
@@ -75,7 +79,7 @@ export const SHARED_SUBTITLE_TOKENS = {
    */
   capcutFontSize: 6.8,
   capcutFontSizeMinimal: 6.5,
-  /** CapCut clip.scale — pairs with font_size for Hormozi preview size. */
+  /** CapCut clip.scale — pairs with font_size for short-form preview size. */
   capcutTextScale: 0.3,
   /** Web overlay font size in CSS px (preview-only). */
   webFontSizePx: 28,
@@ -89,8 +93,8 @@ export const SHARED_SUBTITLE_TOKENS = {
   lineMaxWidth: 0.96,
 } as const;
 
-/** Hormozi / short-form viral defaults shared across themes. */
-const HORMOZI_SUBTITLE_BASE = {
+/** Shared short-form subtitle defaults (karaoke + soft dark box). */
+const SHORTFORM_SUBTITLE_BASE = {
   inactiveColor: SHARED_SUBTITLE_TOKENS.textWhite,
   borderColor: SHARED_SUBTITLE_TOKENS.strokeColor,
   borderWidth: SHARED_SUBTITLE_TOKENS.strokeWidth,
@@ -117,23 +121,23 @@ const HORMOZI_SUBTITLE_BASE = {
 } as const;
 
 export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
-  pop_3d: {
-    ...HORMOZI_SUBTITLE_BASE,
-    id: "pop_3d",
-    label: "Hormozi Bold",
+  impact_yellow: {
+    ...SHORTFORM_SUBTITLE_BASE,
+    id: "impact_yellow",
+    label: "Impact Yellow",
     uppercase: true,
     fontFamily: '"Montserrat", "Rubik", Impact, "Arial Black", sans-serif',
     fontNameCapCut: "Montserrat",
     fontCategoryCapCut: "en",
     activeColor: SHARED_SUBTITLE_TOKENS.accentYellow,
-    keywordAccentColor: SHARED_SUBTITLE_TOKENS.accentYellow,
+    accentColor: SHARED_SUBTITLE_TOKENS.accentYellow,
     webFontSizePx: SHARED_SUBTITLE_TOKENS.webFontSizePx,
     inactiveOpacity: 0.72,
     assetGlowClass: "drop-shadow-[0_0_20px_rgba(255,230,0,0.55)]",
     overlayShellClass: "ring-1 ring-yellow-400/25",
   },
   cyberpunk: {
-    ...HORMOZI_SUBTITLE_BASE,
+    ...SHORTFORM_SUBTITLE_BASE,
     id: "cyberpunk",
     label: "Cyberpunk Green",
     uppercase: true,
@@ -141,27 +145,27 @@ export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
     fontNameCapCut: "Rubik",
     fontCategoryCapCut: "en",
     activeColor: SHARED_SUBTITLE_TOKENS.accentGreen,
-    keywordAccentColor: SHARED_SUBTITLE_TOKENS.accentGreen,
+    accentColor: SHARED_SUBTITLE_TOKENS.accentGreen,
     webFontSizePx: SHARED_SUBTITLE_TOKENS.webFontSizePx,
     inactiveOpacity: 0.7,
     assetGlowClass: "drop-shadow-[0_0_22px_rgba(16,185,129,0.75)]",
     overlayShellClass: "ring-1 ring-emerald-400/30 shadow-[0_0_40px_rgba(16,185,129,0.12)]",
   },
-  minimal_tech: {
-    ...HORMOZI_SUBTITLE_BASE,
-    id: "minimal_tech",
-    label: "Minimalist Tech",
+  editorial_clean: {
+    ...SHORTFORM_SUBTITLE_BASE,
+    id: "editorial_clean",
+    label: "Editorial Clean",
     uppercase: false,
     fontFamily: '"Inter", "SF Pro Text", "Montserrat", "Rubik", system-ui, sans-serif',
     fontNameCapCut: "Inter",
     fontCategoryCapCut: "en",
-    activeColor: SHARED_SUBTITLE_TOKENS.accentYellow,
-    keywordAccentColor: SHARED_SUBTITLE_TOKENS.accentYellow,
+    activeColor: SHARED_SUBTITLE_TOKENS.accentCyan,
+    accentColor: SHARED_SUBTITLE_TOKENS.accentCyan,
     fontSize: SHARED_SUBTITLE_TOKENS.capcutFontSizeMinimal,
     webFontSizePx: SHARED_SUBTITLE_TOKENS.webFontSizePxMinimal,
     inactiveOpacity: 0.78,
-    assetGlowClass: "drop-shadow-[0_4px_14px_rgba(15,23,42,0.55)]",
-    overlayShellClass: "ring-1 ring-slate-500/40",
+    assetGlowClass: "drop-shadow-[0_4px_14px_rgba(6,182,212,0.45)]",
+    overlayShellClass: "ring-1 ring-cyan-400/30",
   },
 };
 
@@ -322,10 +326,8 @@ export function buildPhraseDisplayText(phraseWords: PhraseWord[], preset: Subtit
   return phraseWords.map((entry) => formatPhraseDisplayWord(entry.word, preset)).join(" ");
 }
 
+/** Karaoke: the currently spoken word uses the theme accent; others stay white. */
 function resolveWordAccentColor(entry: PhraseWord, preset: SubtitleStylePreset): string {
-  if (entry.isHighlight) {
-    return preset.keywordAccentColor;
-  }
   if (entry.isActive) {
     return preset.activeColor;
   }
@@ -424,7 +426,7 @@ export function buildCapCutPhraseTextContent(
 
   for (let index = 0; index < displayWords.length; index += 1) {
     const entry = displayWords[index];
-    if (!entry.isHighlight && !entry.isActive) {
+    if (!entry.isActive) {
       continue;
     }
 
@@ -575,7 +577,7 @@ export function buildCapCutSubtitleSegmentPlans(
       continue;
     }
 
-    // Phrase context (up to 3 words) with the spoken word marked active → yellow/green.
+    // Phrase context (up to 3 words) with the spoken word marked active → theme accent.
     const phraseWords = getPhraseWordsForIndex(transcript, wordIndex, preset);
 
     plans.push({
@@ -595,9 +597,7 @@ export function getCapCutTextMaterialProps(
   phraseWords: PhraseWord[],
   preset: SubtitleStylePreset,
 ): StyleDraftRecord {
-  const accentEntry =
-    phraseWords.find((entry) => entry.isHighlight) ??
-    phraseWords.find((entry) => entry.isActive);
+  const accentEntry = phraseWords.find((entry) => entry.isActive);
   const textColor = accentEntry
     ? resolveWordAccentColor(accentEntry, preset)
     : preset.inactiveColor;
@@ -674,7 +674,6 @@ export function getCapCutTextMaterialProps(
 export function getWebSubtitleWordStyle(
   preset: SubtitleStylePreset,
   isActive: boolean,
-  isHighlight = false,
 ): {
   fontFamily: string;
   fontWeight: number;
@@ -691,11 +690,8 @@ export function getWebSubtitleWordStyle(
     fontFamily: preset.fontFamily,
     fontWeight: SUBTITLE_READABILITY.webFontWeight,
     textTransform: preset.uppercase ? "uppercase" : "none",
-    color: isActive
-      ? isHighlight
-        ? preset.keywordAccentColor
-        : preset.activeColor
-      : preset.inactiveColor,
+    // Karaoke: the currently spoken word uses the theme accent color.
+    color: isActive ? preset.activeColor : preset.inactiveColor,
     opacity: isActive ? 1 : preset.inactiveOpacity,
     WebkitTextStroke: `${strokePx}px ${preset.borderColor}`,
     paintOrder: "stroke fill",

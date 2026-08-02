@@ -5,7 +5,7 @@ import type { ProjectStatus } from "@/lib/supabase/client";
 const STATUS_STEPS: Array<{ key: ProjectStatus; label: string; description: string }> = [
   { key: "uploading", label: "Uploading", description: "Sending your clip to storage" },
   { key: "transcribing", label: "Transcribing", description: "Extracting word-level timestamps" },
-  { key: "decorating", label: "Decorating", description: "Mapping punchy keywords to motion assets" },
+  { key: "decorating", label: "Decorating", description: "Mapping punchy words to motion assets" },
   { key: "completed", label: "Ready", description: "Transcript enriched and synced" },
 ];
 
@@ -93,7 +93,7 @@ export function ProcessingLoader({ status, highlightCount, wordCount }: Processi
 
       {status === "completed" && wordCount !== undefined && (
         <p className="mt-5 text-sm text-emerald-400">
-          {wordCount} words transcribed · {highlightCount ?? 0} keywords decorated
+          {wordCount} words transcribed · {highlightCount ?? 0} accents decorated
         </p>
       )}
 

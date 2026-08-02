@@ -6,7 +6,7 @@ create table if not exists public.projects (
   created_at timestamp with time zone default now(),
   video_url text not null,
   status text check (status in ('uploading', 'transcribing', 'decorating', 'completed', 'failed')) default 'uploading',
-  theme text default 'pop_3d',
+  theme text default 'impact_yellow',
   transcript_data jsonb,
   duration_seconds float,
   capcut_draft_url text,
