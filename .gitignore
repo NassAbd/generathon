@@ -57,6 +57,11 @@ documentation/
 !docs/
 !docs/screenshots/
 !docs/screenshots/.gitkeep
+!docs/screenshots/*.png
+!docs/screenshots/*.jpg
+!docs/screenshots/*.jpeg
+!docs/screenshots/*.webp
+!docs/screenshots/*.gif
 
 node_modules/
 

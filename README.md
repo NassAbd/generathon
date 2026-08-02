@@ -12,6 +12,9 @@
 
 [Overview](#-overview--vision) · [Demo](#-demo--screenshots) · [Features](#-key-features) · [Stack](#-technical-architecture--stack) · [Setup](#-getting-started--local-setup)
 
+
+[![Watch the demo on YouTube](https://img.youtube.com/vi/qYTPJdWQOnw/hqdefault.jpg)](https://youtu.be/qYTPJdWQOnw)
+
 </div>
 
 ---
@@ -51,13 +54,15 @@ A **studio** that automates the pipeline end-to-end:
 
 ## 🎬 Demo & Screenshots
 
-> 📌 *Placeholders — drop assets into `docs/screenshots/` and link your demo when ready.*
+**Demo video:** [https://youtu.be/qYTPJdWQOnw](https://youtu.be/qYTPJdWQOnw)
 
-| Asset | Placeholder |
-|-------|-------------|
-| **Demo Video (≤ 2 min)** | `[Link to Demo Video / GIF]` |
-| **Landing Page (Single Viewport Upload)** | `![Landing Page Screen](docs/screenshots/landing.png)` |
-| **Studio Editor & Theme Selector** | `![Studio Editor Screen](docs/screenshots/editor.png)` |
+### Landing Page (Single Viewport Upload)
+
+![Landing Page Screen](docs/screenshots/landing.png)
+
+### Studio Editor & Theme Selector
+
+![Studio Editor Screen](docs/screenshots/editor.png)
 
 ---
 
@@ -121,8 +126,7 @@ Without these two resources, CapCut export would have remained guesswork. They p
 
 | Resource | Role in this project |
 |----------|----------------------|
-| [Noto Emoji Animation](https://googlefonts.github.io/noto-emoji-animation/) | Animated emoji / motion asset ideas for punchy on-video overlays. |
-| [LottieFiles](https://lottiefiles.com) | Lightweight motion graphics reference for future kinetic / B-roll overlays. |
+| [Pixabay](https://pixabay.com/) | Royalty-free stock photos, videos, and music used for marketing frames, BGM inspiration, and demo assets. |
 | [Mixkit Free Sound Effects](https://mixkit.co/free-sound-effects/) | SFX palette inspiration for whoosh / impact cues paired with caption hits. |
 
 ### Platform & web media docs
@@ -133,8 +137,6 @@ Without these two resources, CapCut export would have remained guesswork. They p
 - [MediaRecorder API (MDN)](https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder) — browser MP4/WebM capture  
 - [Supabase Docs](https://supabase.com/docs) — Storage, Postgres, Realtime project status  
 - [Sonner](https://sonner.emilkowal.ski/) — non-blocking toast UX  
-
-Internal notes: [`TECHNICAL_CONSTRAINTS.md`](./TECHNICAL_CONSTRAINTS.md) (engine contracts for UI work) · [`SETUP.md`](./SETUP.md) · [`SPEC.md`](./SPEC.md)
 
 ---
 
