@@ -72,7 +72,13 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
             speakerOffsetPercentX={speakerOffsetPercentX}
             speakerOffsetSegments={speakerOffsetSegments}
           />
-          <ExportMp4Button projectId={project.id} themeId={theme} />
+          <ExportMp4Button
+            projectId={project.id}
+            themeId={theme}
+            videoUrl={project.video_url}
+            transcript={transcript}
+            bgmUrl={project.selected_bgm_url}
+          />
         </div>
       </header>
 
