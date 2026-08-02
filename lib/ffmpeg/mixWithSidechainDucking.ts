@@ -33,7 +33,7 @@ export interface SidechainDuckingResult {
   filterComplex: string;
 }
 
-let ffmpegPathConfigured = false;
+let cachedFfmpegBinaryPath: string | null | undefined;
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -44,10 +44,10 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-/** Prefer bundled ffmpeg-static; fall back to system PATH. */
+/** Prefer bundled ffmpeg-static; fall back to system PATH. Always returns the real binary path. */
 export async function configureFfmpegBinary(): Promise<string | null> {
-  if (ffmpegPathConfigured) {
-    return "configured";
+  if (cachedFfmpegBinaryPath !== undefined) {
+    return cachedFfmpegBinaryPath;
   }
 
   try {
@@ -55,7 +55,7 @@ export async function configureFfmpegBinary(): Promise<string | null> {
     const ffmpegStatic = (await import("ffmpeg-static")).default;
     if (typeof ffmpegStatic === "string" && (await pathExists(ffmpegStatic))) {
       ffmpeg.setFfmpegPath(ffmpegStatic);
-      ffmpegPathConfigured = true;
+      cachedFfmpegBinaryPath = ffmpegStatic;
       return ffmpegStatic;
     }
   } catch {
@@ -65,11 +65,49 @@ export async function configureFfmpegBinary(): Promise<string | null> {
   const systemPath = await resolveSystemFfmpegPath();
   if (systemPath) {
     ffmpeg.setFfmpegPath(systemPath);
-    ffmpegPathConfigured = true;
+    cachedFfmpegBinaryPath = systemPath;
     return systemPath;
   }
 
+  cachedFfmpegBinaryPath = null;
   return null;
+}
+
+/** Probe which caption-related filters the configured FFmpeg binary exposes. */
+export async function probeFfmpegCaptionFilters(): Promise<{
+  binaryPath: string | null;
+  drawtext: boolean;
+  subtitles: boolean;
+  ass: boolean;
+}> {
+  const binaryPath = await configureFfmpegBinary();
+  if (!binaryPath) {
+    return { binaryPath: null, drawtext: false, subtitles: false, ass: false };
+  }
+
+  return new Promise((resolve) => {
+    const child = spawn(binaryPath, ["-hide_banner", "-filters"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.on("close", () => {
+      resolve({
+        binaryPath,
+        drawtext: /\bdrawtext\b/.test(stdout),
+        subtitles: /\bsubtitles\b/.test(stdout),
+        ass: /(^|\s)ass\b/.test(stdout),
+      });
+    });
+    child.on("error", () => {
+      resolve({ binaryPath, drawtext: false, subtitles: false, ass: false });
+    });
+  });
 }
 
 async function resolveSystemFfmpegPath(): Promise<string | null> {

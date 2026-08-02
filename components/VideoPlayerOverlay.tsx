@@ -18,6 +18,7 @@ import {
   getPhraseBlockStartIndex,
   getPhraseWordsForIndex,
   getSubtitlePreset,
+  getWebSubtitleSurfaceStyle,
   getWebSubtitleWordStyle,
   formatPhraseDisplayWord,
 } from "@/lib/capcut/presets";
@@ -610,7 +611,8 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
             >
               <div
                 key={`${theme}-chunk-${phraseBlockStart}`}
-                className="inline-flex max-w-[92%] flex-wrap items-center justify-center gap-x-2 gap-y-1 px-2"
+                className="inline-flex max-w-[92%] flex-wrap items-center justify-center gap-x-2 gap-y-1"
+                style={getWebSubtitleSurfaceStyle(subtitlePreset) ?? undefined}
               >
                 {phrase.map((entry) => {
                   const isActive = entry.index === activeWordIndex;

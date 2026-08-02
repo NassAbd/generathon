@@ -11,9 +11,11 @@ export interface SubtitleStylePreset {
   fontFamily: string;
   fontNameCapCut: string;
   fontCategoryCapCut: string;
+  /** Default body text — Hormozi white. */
   inactiveColor: string;
+  /** Emphasized / current word — typically yellow. */
   activeColor: string;
-  /** Rich-text accent for highlighted keywords when they are the active word. */
+  /** Rich-text accent for highlighted keywords (`#FFE600` / `#10B981`). */
   keywordAccentColor: string;
   borderColor: string;
   borderWidth: number;
@@ -22,12 +24,12 @@ export interface SubtitleStylePreset {
   shadowAlpha: number;
   shadowDistance: number;
   shadowDistanceActive: number;
-  /** CapCut material `font_size` (web preview uses `webFontSizePx`). */
+  /** CapCut material `font_size` for 1080×1920 (~13–15). */
   fontSize: number;
-  /** CapCut text segment `clip.scale` — primary visual size control (font_size alone is ignored). */
+  /** CapCut text segment `clip.scale`. */
   textScale: number;
   activeWordScale: number;
-  /** CapCut clip.transform.y — positive = up, negative = down. */
+  /** CapCut clip.transform — lower-center (`x: 0`, `y: -0.55`). */
   subtitleY: number;
   /** CapCut clip.transform.y for 3D badge (positive = higher on frame). */
   assetY: number;
@@ -43,8 +45,11 @@ export interface SubtitleStylePreset {
   webAssetSizePx: number;
   /** Web overlay: inactive word font size in px. */
   webFontSizePx: number;
-  /** Fixed subtitle block size — words are grouped [0,1,2], [3,4,5], … */
+  /** CapCut + web: 1–3 words max per subtitle segment. */
   phraseBlockSize: number;
+  /** Soft black caption box behind text. */
+  useBackgroundBox: boolean;
+  backgroundAlpha: number;
   lineMaxWidth: number;
   letterSpacing: number;
   inactiveOpacity: number;
@@ -52,111 +57,111 @@ export interface SubtitleStylePreset {
   overlayShellClass: string;
 }
 
+/**
+ * Shared color/surface tokens for CapCut + web + ASS burn-in.
+ * CapCut `font_size` uses a tiny draft scale (~5); web uses px separately.
+ */
+export const SHARED_SUBTITLE_TOKENS = {
+  textWhite: "#FFFFFF",
+  accentYellow: "#FFE600",
+  accentGreen: "#10B981",
+  strokeColor: "#000000",
+  strokeWidth: 0.07,
+  backgroundColor: "#000000",
+  backgroundAlpha: 0.6,
+  /**
+   * CapCut draft material font_size (NOT CSS px).
+   * ~6.8 + textScale 0.3 fits long French words on a 9:16 frame.
+   */
+  capcutFontSize: 6.8,
+  capcutFontSizeMinimal: 6.5,
+  /** CapCut clip.scale — pairs with font_size for Hormozi preview size. */
+  capcutTextScale: 0.3,
+  /** Web overlay font size in CSS px (preview-only). */
+  webFontSizePx: 28,
+  webFontSizePxMinimal: 26,
+  subtitleY: -0.55,
+  webSubtitleTop: 0.78,
+  /**
+   * CapCut line box width (0–1 of canvas). Must stay wide — a narrow
+   * `line_max_width` + force wrap causes per-character vertical columns.
+   */
+  lineMaxWidth: 0.96,
+} as const;
+
+/** Hormozi / short-form viral defaults shared across themes. */
+const HORMOZI_SUBTITLE_BASE = {
+  inactiveColor: SHARED_SUBTITLE_TOKENS.textWhite,
+  borderColor: SHARED_SUBTITLE_TOKENS.strokeColor,
+  borderWidth: SHARED_SUBTITLE_TOKENS.strokeWidth,
+  borderWidthActive: SHARED_SUBTITLE_TOKENS.strokeWidth,
+  shadowColor: SHARED_SUBTITLE_TOKENS.strokeColor,
+  shadowAlpha: 0.75,
+  shadowDistance: 2,
+  shadowDistanceActive: 2,
+  fontSize: SHARED_SUBTITLE_TOKENS.capcutFontSize,
+  textScale: SHARED_SUBTITLE_TOKENS.capcutTextScale,
+  activeWordScale: 1.08,
+  subtitleY: SHARED_SUBTITLE_TOKENS.subtitleY,
+  assetY: 0.2,
+  assetX: 0,
+  assetScale: 0.22,
+  webSubtitleTop: SHARED_SUBTITLE_TOKENS.webSubtitleTop,
+  webAssetTop: 0.52,
+  webAssetSizePx: 100,
+  phraseBlockSize: 3,
+  useBackgroundBox: true,
+  backgroundAlpha: SHARED_SUBTITLE_TOKENS.backgroundAlpha,
+  lineMaxWidth: SHARED_SUBTITLE_TOKENS.lineMaxWidth,
+  letterSpacing: 0,
+} as const;
+
 export const SUBTITLE_STYLE_PRESETS: Record<ThemeId, SubtitleStylePreset> = {
   pop_3d: {
+    ...HORMOZI_SUBTITLE_BASE,
     id: "pop_3d",
-    label: "Viral Yellow",
+    label: "Hormozi Bold",
     uppercase: true,
-    fontFamily: "Montserrat, Impact, Arial Black, sans-serif",
+    fontFamily: '"Montserrat", "Rubik", Impact, "Arial Black", sans-serif',
     fontNameCapCut: "Montserrat",
     fontCategoryCapCut: "en",
-    inactiveColor: "#FFFFFF",
-    activeColor: "#FFE500",
-    keywordAccentColor: "#FF1493",
-    borderColor: "#000000",
-    borderWidth: 0.085,
-    borderWidthActive: 0.09,
-    shadowColor: "#000000",
-    shadowAlpha: 0.8,
-    shadowDistance: 2,
-    shadowDistanceActive: 2,
-    fontSize: 4.0,
-    textScale: 0.18,
-    activeWordScale: 1.1,
-    subtitleY: -0.55,
-    assetY: 0.2,
-    assetX: 0,
-    assetScale: 0.22,
-    webSubtitleTop: 0.75,
-    webAssetTop: 0.52,
-    webAssetSizePx: 100,
-    webFontSizePx: 13,
-    phraseBlockSize: 3,
-    lineMaxWidth: 0.82,
-    letterSpacing: 0.02,
+    activeColor: SHARED_SUBTITLE_TOKENS.accentYellow,
+    keywordAccentColor: SHARED_SUBTITLE_TOKENS.accentYellow,
+    webFontSizePx: SHARED_SUBTITLE_TOKENS.webFontSizePx,
     inactiveOpacity: 0.72,
-    assetGlowClass: "drop-shadow-[0_0_20px_rgba(255,229,0,0.55)]",
-    overlayShellClass: "ring-1 ring-yellow-400/20",
+    assetGlowClass: "drop-shadow-[0_0_20px_rgba(255,230,0,0.55)]",
+    overlayShellClass: "ring-1 ring-yellow-400/25",
   },
   cyberpunk: {
+    ...HORMOZI_SUBTITLE_BASE,
     id: "cyberpunk",
     label: "Cyberpunk Green",
     uppercase: true,
-    fontFamily: "Courier New, monospace",
-    fontNameCapCut: "Courier",
+    fontFamily: '"Rubik", "Montserrat", "Inter", sans-serif',
+    fontNameCapCut: "Rubik",
     fontCategoryCapCut: "en",
-    inactiveColor: "#E0F2FE",
-    activeColor: "#39FF14",
-    keywordAccentColor: "#FF007F",
-    borderColor: "#000000",
-    borderWidth: 0.085,
-    borderWidthActive: 0.09,
-    shadowColor: "#000000",
-    shadowAlpha: 0.8,
-    shadowDistance: 2,
-    shadowDistanceActive: 2,
-    fontSize: 4.0,
-    textScale: 0.18,
-    activeWordScale: 1.1,
-    subtitleY: -0.55,
-    assetY: 0.2,
-    assetX: 0,
-    assetScale: 0.22,
-    webSubtitleTop: 0.75,
-    webAssetTop: 0.52,
-    webAssetSizePx: 100,
-    webFontSizePx: 12,
-    phraseBlockSize: 3,
-    lineMaxWidth: 0.8,
-    letterSpacing: 0.04,
-    inactiveOpacity: 0.68,
-    assetGlowClass: "drop-shadow-[0_0_22px_rgba(57,255,20,0.75)]",
-    overlayShellClass: "ring-1 ring-emerald-400/30 shadow-[0_0_40px_rgba(57,255,20,0.12)]",
+    activeColor: SHARED_SUBTITLE_TOKENS.accentGreen,
+    keywordAccentColor: SHARED_SUBTITLE_TOKENS.accentGreen,
+    webFontSizePx: SHARED_SUBTITLE_TOKENS.webFontSizePx,
+    inactiveOpacity: 0.7,
+    assetGlowClass: "drop-shadow-[0_0_22px_rgba(16,185,129,0.75)]",
+    overlayShellClass: "ring-1 ring-emerald-400/30 shadow-[0_0_40px_rgba(16,185,129,0.12)]",
   },
   minimal_tech: {
+    ...HORMOZI_SUBTITLE_BASE,
     id: "minimal_tech",
-    label: "Clean White",
+    label: "Minimalist Tech",
     uppercase: false,
-    fontFamily: "Inter, system-ui, sans-serif",
+    fontFamily: '"Inter", "SF Pro Text", "Montserrat", "Rubik", system-ui, sans-serif',
     fontNameCapCut: "Inter",
     fontCategoryCapCut: "en",
-    inactiveColor: "#F8FAFC",
-    activeColor: "#FFFFFF",
-    keywordAccentColor: "#F472B6",
-    borderColor: "#000000",
-    borderWidth: 0.085,
-    borderWidthActive: 0.09,
-    shadowColor: "#000000",
-    shadowAlpha: 0.8,
-    shadowDistance: 2,
-    shadowDistanceActive: 2,
-    fontSize: 3.5,
-    textScale: 0.16,
-    activeWordScale: 1.08,
-    subtitleY: -0.55,
-    assetY: 0.2,
-    assetX: 0,
-    assetScale: 0.22,
-    webSubtitleTop: 0.75,
-    webAssetTop: 0.52,
-    webAssetSizePx: 100,
-    webFontSizePx: 12,
-    phraseBlockSize: 3,
-    lineMaxWidth: 0.78,
-    letterSpacing: 0,
+    activeColor: SHARED_SUBTITLE_TOKENS.accentYellow,
+    keywordAccentColor: SHARED_SUBTITLE_TOKENS.accentYellow,
+    fontSize: SHARED_SUBTITLE_TOKENS.capcutFontSizeMinimal,
+    webFontSizePx: SHARED_SUBTITLE_TOKENS.webFontSizePxMinimal,
     inactiveOpacity: 0.78,
     assetGlowClass: "drop-shadow-[0_4px_14px_rgba(15,23,42,0.55)]",
-    overlayShellClass: "ring-1 ring-slate-600/40",
+    overlayShellClass: "ring-1 ring-slate-500/40",
   },
 };
 
@@ -164,24 +169,43 @@ export function getSubtitlePreset(theme: ThemeId): SubtitleStylePreset {
   return SUBTITLE_STYLE_PRESETS[theme];
 }
 
-/** Shared stroke/shadow tuning for crisp subtitles on bright backgrounds. */
+/** Shared stroke/shadow tuning — same tokens for CapCut + web preview. */
 export const SUBTITLE_READABILITY = {
-  strokeColor: "#000000",
-  /** CapCut material border_width (~3–4px at export scale). */
-  capcutBorderWidth: 0.085,
+  strokeColor: SHARED_SUBTITLE_TOKENS.strokeColor,
+  /** CapCut material border_width / rich-text stroke (exact parity: 0.07). */
+  capcutBorderWidth: SHARED_SUBTITLE_TOKENS.strokeWidth,
   capcutBorderAlpha: 1,
-  capcutShadowColor: "#000000",
-  capcutShadowAlpha: 0.8,
+  capcutShadowColor: SHARED_SUBTITLE_TOKENS.strokeColor,
+  capcutShadowAlpha: 0.75,
   /** CapCut shadow angle (90° ≈ downward offset). */
   capcutShadowAngle: 90,
   capcutShadowDistance: 2,
   /** CapCut shadow_smoothing (~4–6px blur). */
-  capcutShadowSmoothing: 0.55,
-  webStrokeWidthPx: 3.5,
+  capcutShadowSmoothing: 0.5,
+  /** Web stroke px mapped from CapCut 0.07 (~2.8px). */
+  webStrokeWidthPx: SHARED_SUBTITLE_TOKENS.strokeWidth * 40,
   webShadowOffsetY: 2,
   webShadowBlurPx: 5,
   webFontWeight: 800,
 } as const;
+
+/** CSS box for the soft dark caption surface (matches CapCut surface_alpha 0.6). */
+export function getWebSubtitleSurfaceStyle(preset: SubtitleStylePreset): {
+  backgroundColor: string;
+  borderRadius: string;
+  padding: string;
+} | null {
+  if (!preset.useBackgroundBox) {
+    return null;
+  }
+
+  const alpha = preset.backgroundAlpha;
+  return {
+    backgroundColor: `rgba(0, 0, 0, ${alpha})`,
+    borderRadius: "0.55rem",
+    padding: "0.35rem 0.65rem",
+  };
+}
 
 export function hexToRgb(hex: string): RgbColor {
   const normalized = hex.replace("#", "").slice(0, 6);
@@ -298,57 +322,119 @@ export function buildPhraseDisplayText(phraseWords: PhraseWord[], preset: Subtit
   return phraseWords.map((entry) => formatPhraseDisplayWord(entry.word, preset)).join(" ");
 }
 
-function resolveActiveWordColor(entry: PhraseWord, preset: SubtitleStylePreset): string {
+function resolveWordAccentColor(entry: PhraseWord, preset: SubtitleStylePreset): string {
   if (entry.isHighlight) {
     return preset.keywordAccentColor;
   }
-  return preset.activeColor;
+  if (entry.isActive) {
+    return preset.activeColor;
+  }
+  return preset.inactiveColor;
 }
 
-export function buildCapCutPhraseTextContent(
+/** Max characters on a single CapCut caption line before forcing a `\n` split. */
+export const CAPCUT_SINGLE_LINE_MAX_CHARS = 16;
+
+/**
+ * Dynamic 1 vs 2 line break:
+ * - Short chunks (≤16 chars, or ≤3 short words totaling ≤16): ONE line (no `\n`)
+ * - Long chunks (>16 chars): balanced 2-line split
+ *
+ * Returns `displayWords.length` when there should be NO newline.
+ */
+export function choosePhraseLineBreakIndex(displayWords: string[]): number {
+  if (displayWords.length <= 1) {
+    return displayWords.length;
+  }
+
+  const joined = displayWords.join(" ");
+  if (joined.length <= CAPCUT_SINGLE_LINE_MAX_CHARS) {
+    // Keep short 2–3 word phrases on a single centered line.
+    return displayWords.length;
+  }
+
+  // Long chunk: pick the split that best balances character counts (max 2 lines).
+  let bestSplit = Math.ceil(displayWords.length / 2);
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let split = 1; split < displayWords.length; split += 1) {
+    const line1 = displayWords.slice(0, split).join(" ");
+    const line2 = displayWords.slice(split).join(" ");
+    const imbalance = Math.abs(line1.length - line2.length);
+    const overflowPenalty = line1.length > 22 || line2.length > 22 ? 12 : 0;
+    const score = imbalance + overflowPenalty;
+    if (score < bestScore) {
+      bestScore = score;
+      bestSplit = split;
+    }
+  }
+
+  return bestSplit;
+}
+
+/** Build display text + per-word ranges, inserting an explicit `\\n` for CapCut. */
+export function buildPhraseTextWithLineBreak(
   phraseWords: PhraseWord[],
   preset: SubtitleStylePreset,
-): string {
+): {
+  fullText: string;
+  ranges: Array<{ start: number; end: number }>;
+  displayWords: Array<PhraseWord & { display: string }>;
+} {
   const displayWords = phraseWords.map((entry) => ({
     ...entry,
     display: formatPhraseDisplayWord(entry.word, preset),
   }));
-  const fullText = displayWords.map((entry) => entry.display).join(" ");
-  const textLength = fullText.length;
+  const displays = displayWords.map((entry) => entry.display);
+  const breakAfter = choosePhraseLineBreakIndex(displays);
 
-  const activeEntry = displayWords.find((entry) => entry.isActive);
-  let activeStart = -1;
-  let activeEnd = -1;
+  const ranges: Array<{ start: number; end: number }> = [];
+  let fullText = "";
 
-  if (activeEntry) {
-    let charOffset = 0;
+  for (let index = 0; index < displayWords.length; index += 1) {
+    const entry = displayWords[index];
+    const start = fullText.length;
+    fullText += entry.display;
+    ranges.push({ start, end: fullText.length });
 
-    for (let index = 0; index < displayWords.length; index += 1) {
-      const entry = displayWords[index];
-      if (entry.isActive) {
-        activeStart = charOffset;
-        activeEnd = charOffset + entry.display.length;
-        break;
-      }
-
-      charOffset += entry.display.length;
-      if (index < displayWords.length - 1) {
-        charOffset += 1;
-      }
+    if (index >= displayWords.length - 1) {
+      continue;
     }
+
+    // Explicit newline forces CapCut onto a 2nd line (space alone will not wrap).
+    fullText += index + 1 === breakAfter ? "\n" : " ";
   }
+
+  return { fullText, ranges, displayWords };
+}
+
+/**
+ * CapCut rich-text content: white body + karaoke accents + explicit 2-line layout.
+ */
+export function buildCapCutPhraseTextContent(
+  phraseWords: PhraseWord[],
+  preset: SubtitleStylePreset,
+): string {
+  const { fullText, ranges, displayWords } = buildPhraseTextWithLineBreak(phraseWords, preset);
+  const textLength = fullText.length;
 
   const styles: Array<Record<string, unknown>> = [
     buildTextStyleRange(0, textLength, hexToRgb(preset.inactiveColor)),
   ];
 
-  if (activeEntry && activeStart >= 0 && activeEnd > activeStart && activeEnd <= textLength) {
+  for (let index = 0; index < displayWords.length; index += 1) {
+    const entry = displayWords[index];
+    if (!entry.isHighlight && !entry.isActive) {
+      continue;
+    }
+
+    const range = ranges[index];
+    if (!range || range.end <= range.start || range.end > textLength) {
+      continue;
+    }
+
     styles.push(
-      buildTextStyleRange(
-        activeStart,
-        activeEnd,
-        hexToRgb(resolveActiveWordColor(activeEntry, preset)),
-      ),
+      buildTextStyleRange(range.start, range.end, hexToRgb(resolveWordAccentColor(entry, preset))),
     );
   }
 
@@ -439,7 +525,11 @@ export function sanitizeCapCutSubtitleSegmentPlans(
   return sanitized.filter((plan) => plan.durationMicros > 0);
 }
 
-/** Builds strictly non-overlapping subtitle segment timings aligned to transcript word starts. */
+/**
+ * Karaoke-style CapCut segments: one timeline clip per spoken word.
+ * Each clip shows the 1–3 word phrase block with the spoken word accented
+ * (`#FFE600` / theme accent) for that word's exact start→end window.
+ */
 export function buildCapCutSubtitleSegmentPlans(
   transcript: TranscriptData,
   preset: SubtitleStylePreset,
@@ -463,17 +553,16 @@ export function buildCapCutSubtitleSegmentPlans(
   for (let index = 0; index < chronological.length; index += 1) {
     const { entry, wordIndex } = chronological[index];
     const startMicros = toMicroseconds(entry.start);
-    const wordEndMicros = toMicroseconds(entry.end);
+    let endMicros = toMicroseconds(entry.end);
 
-    let endMicros = wordEndMicros;
-    if (index < chronological.length - 1) {
+    if (index + 1 < chronological.length) {
       const nextStartMicros = toMicroseconds(chronological[index + 1].entry.start);
       endMicros = Math.min(endMicros, nextStartMicros);
     }
 
     if (endMicros <= startMicros) {
       const nextStartMicros =
-        index < chronological.length - 1
+        index + 1 < chronological.length
           ? toMicroseconds(chronological[index + 1].entry.start)
           : startMicros + MIN_SUBTITLE_SEGMENT_MICROS;
       if (nextStartMicros <= startMicros) {
@@ -486,11 +575,14 @@ export function buildCapCutSubtitleSegmentPlans(
       continue;
     }
 
+    // Phrase context (up to 3 words) with the spoken word marked active → yellow/green.
+    const phraseWords = getPhraseWordsForIndex(transcript, wordIndex, preset);
+
     plans.push({
       wordIndex,
       startMicros,
       durationMicros: endMicros - startMicros,
-      phraseWords: getPhraseWordsForIndex(transcript, wordIndex, preset),
+      phraseWords,
     });
   }
 
@@ -503,45 +595,76 @@ export function getCapCutTextMaterialProps(
   phraseWords: PhraseWord[],
   preset: SubtitleStylePreset,
 ): StyleDraftRecord {
-  const activeEntry = phraseWords.find((entry) => entry.isActive);
-  const hasActiveWord = activeEntry !== undefined;
-  const activeColor = activeEntry ? resolveActiveWordColor(activeEntry, preset) : preset.inactiveColor;
+  const accentEntry =
+    phraseWords.find((entry) => entry.isHighlight) ??
+    phraseWords.find((entry) => entry.isActive);
+  const textColor = accentEntry
+    ? resolveWordAccentColor(accentEntry, preset)
+    : preset.inactiveColor;
+  const strokeWidth = preset.borderWidth || SUBTITLE_READABILITY.capcutBorderWidth;
+  const surfaceAlpha = preset.useBackgroundBox ? preset.backgroundAlpha : 0;
+  // CapCut expects #RRGGBBAA for some surface fields.
+  const bgHexWithAlpha = `#000000${Math.round(surfaceAlpha * 255)
+    .toString(16)
+    .padStart(2, "0")
+    .toUpperCase()}`;
 
   return {
     type: "text",
     content: buildCapCutPhraseTextContent(phraseWords, preset),
+    // Horizontal centered layout (CapCut: 0=left, 1=center, 2=right).
     alignment: 1,
+    text_align: 1,
+    text_alignment: 1,
+    // Draft-scale size (~6.8) + clip textScale ~0.3 — fits long FR tokens in 9:16.
     font_size: preset.fontSize,
     font_name: preset.fontNameCapCut,
     font_category: preset.fontCategoryCapCut,
-    text_color: hasActiveWord ? activeColor : preset.inactiveColor,
+    font_title: `${preset.fontNameCapCut}-Bold`,
+    text_color: textColor,
+    // typesetting 0 = horizontal; 1 = vertical column (must stay 0).
     typesetting: 0,
-    letter_spacing: preset.letterSpacing,
-    line_spacing: 0.02,
+    letter_spacing: 0,
+    line_spacing: 0.08,
     line_feed: 1,
-    line_max_width: preset.lineMaxWidth,
+    // Wide box + NO forced auto-wrap — explicit \\n handles 2 lines.
+    // Narrow force_apply_line_max_width was wrapping every character.
+    line_max_width: Math.max(preset.lineMaxWidth, 0.95),
     force_apply_line_max_width: false,
+    wrap: false,
+    word_wrap: false,
     check_flag: 7,
     fixed_width: -1,
     fixed_height: -1,
     text_alpha: 1,
-    border_color: SUBTITLE_READABILITY.strokeColor,
-    border_width: SUBTITLE_READABILITY.capcutBorderWidth,
+    // Outline for contrast on any background.
+    border_color: preset.borderColor || SUBTITLE_READABILITY.strokeColor,
+    border_width: strokeWidth,
     border_alpha: SUBTITLE_READABILITY.capcutBorderAlpha,
+    stroke_color: preset.borderColor || SUBTITLE_READABILITY.strokeColor,
+    stroke_width: strokeWidth,
     has_shadow: true,
     shadow_alpha: SUBTITLE_READABILITY.capcutShadowAlpha,
     shadow_angle: SUBTITLE_READABILITY.capcutShadowAngle,
     shadow_color: SUBTITLE_READABILITY.capcutShadowColor,
     shadow_distance: SUBTITLE_READABILITY.capcutShadowDistance,
     shadow_smoothing: SUBTITLE_READABILITY.capcutShadowSmoothing,
-    background_color: "#000000",
-    background_alpha: 0,
-    background_style: 0,
-    background_round_radius: 0,
-    background_width: 0.14,
-    background_height: 0.14,
-    background_horizontal_offset: 0,
-    background_vertical_offset: 0,
+    // Soft black caption box — must be present for CapCut desktop.
+    use_surface: true,
+    surface_color: "#000000",
+    surface_alpha: surfaceAlpha || SHARED_SUBTITLE_TOKENS.backgroundAlpha,
+    bg_color: "#000000",
+    bg_alpha: surfaceAlpha || SHARED_SUBTITLE_TOKENS.backgroundAlpha,
+    background_color: bgHexWithAlpha || "#00000099",
+    background_alpha: surfaceAlpha || SHARED_SUBTITLE_TOKENS.backgroundAlpha,
+    background_style: 1,
+    background_round_radius: 0.25,
+    background_width: 0.28,
+    background_height: 0.12,
+    background_horizontal_offset: 0.5,
+    background_vertical_offset: 0.5,
+    background_fill: "solid",
+    // Critical: vertical typesetting stacks characters into a column.
     vertical: false,
     is_rich_text: true,
     use_effect_default_color: false,
@@ -563,6 +686,7 @@ export function getWebSubtitleWordStyle(
   textShadow: string;
   letterSpacing: string;
 } {
+  const strokePx = preset.borderWidth * 40;
   return {
     fontFamily: preset.fontFamily,
     fontWeight: SUBTITLE_READABILITY.webFontWeight,
@@ -573,7 +697,7 @@ export function getWebSubtitleWordStyle(
         : preset.activeColor
       : preset.inactiveColor,
     opacity: isActive ? 1 : preset.inactiveOpacity,
-    WebkitTextStroke: `${SUBTITLE_READABILITY.webStrokeWidthPx}px ${SUBTITLE_READABILITY.strokeColor}`,
+    WebkitTextStroke: `${strokePx}px ${preset.borderColor}`,
     paintOrder: "stroke fill",
     textShadow: `0 ${SUBTITLE_READABILITY.webShadowOffsetY}px ${SUBTITLE_READABILITY.webShadowBlurPx}px rgba(0,0,0,${SUBTITLE_READABILITY.capcutShadowAlpha})`,
     letterSpacing: `${preset.letterSpacing}em`,

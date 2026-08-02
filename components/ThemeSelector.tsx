@@ -28,7 +28,7 @@ export function ThemeSelector({ value, onChange }: ThemeSelectorProps): JSX.Elem
               onClick={() => onChange(preset.id)}
               className={`rounded-xl border px-3 py-3 text-left transition duration-200 ${
                 isActive
-                  ? `${preset.pillClass} shadow-[0_0_24px_rgba(168,85,247,0.18)]`
+                  ? preset.pillClass
                   : "border-white/10 bg-black/20 hover:border-white/25"
               }`}
             >

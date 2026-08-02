@@ -3,8 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 
-import { CopyShareLinkButton } from "@/components/CopyShareLinkButton";
 import { ExportCapCutLocalButton } from "@/components/ExportCapCutLocalButton";
+import { ExportMp4Button } from "@/components/ExportMp4Button";
 import { ThemeSelector } from "@/components/ThemeSelector";
 import { TranscriptSidebar } from "@/components/TranscriptSidebar";
 import { VideoPlayerOverlay, type VideoPlayerOverlayHandle } from "@/components/VideoPlayerOverlay";
@@ -72,7 +72,7 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
             speakerOffsetPercentX={speakerOffsetPercentX}
             speakerOffsetSegments={speakerOffsetSegments}
           />
-          <CopyShareLinkButton projectId={project.id} />
+          <ExportMp4Button projectId={project.id} themeId={theme} />
         </div>
       </header>
 

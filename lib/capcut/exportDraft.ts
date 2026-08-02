@@ -259,6 +259,7 @@ function baseSegment(
 function applyTextSegmentLayout(textSegment: DraftRecord, preset: SubtitleStylePreset): void {
   const textClip = textSegment.clip as DraftRecord;
   textClip.scale = { x: preset.textScale, y: preset.textScale };
+  // Lower-center on 9:16 canvas (Hormozi / short-form default).
   textClip.transform = { x: 0.0, y: preset.subtitleY };
   textClip.rotation = 0.0;
   textSegment.uniform_scale = { on: true, value: preset.textScale };
@@ -1468,9 +1469,38 @@ function enrichTextMaterialForDraftInfo(material: DraftRecord): DraftRecord {
     font_url: "",
     alignment: typeof material.alignment === "number" ? material.alignment : 1,
     ...material,
-    font_size: typeof material.font_size === "number" ? material.font_size : 15.0,
+    font_size: typeof material.font_size === "number" ? material.font_size : 6.8,
     letter_spacing: typeof material.letter_spacing === "number" ? material.letter_spacing : 0.0,
     line_spacing: typeof material.line_spacing === "number" ? material.line_spacing : 0.02,
+    border_width:
+      typeof material.border_width === "number"
+        ? material.border_width
+        : typeof material.stroke_width === "number"
+          ? material.stroke_width
+          : 0.07,
+    background_style:
+      typeof material.background_style === "number" ? material.background_style : 0,
+    background_alpha:
+      typeof material.background_alpha === "number"
+        ? material.background_alpha
+        : typeof material.surface_alpha === "number"
+          ? material.surface_alpha
+          : typeof material.bg_alpha === "number"
+            ? material.bg_alpha
+            : 0,
+    background_color:
+      typeof material.background_color === "string"
+        ? material.background_color
+        : typeof material.surface_color === "string"
+          ? material.surface_color
+          : "#00000000",
+    use_surface: Boolean(material.use_surface ?? material.background_style === 1),
+    surface_alpha:
+      typeof material.surface_alpha === "number"
+        ? material.surface_alpha
+        : typeof material.background_alpha === "number"
+          ? material.background_alpha
+          : 0,
   };
 }
 
