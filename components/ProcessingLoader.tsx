@@ -21,6 +21,7 @@ export interface ProcessingLoaderProps {
   wordCount?: number;
 }
 
+/** Occupies the same landing-page slot as BeforeAfterCard during processing. */
 export function ProcessingLoader({ status, highlightCount, wordCount }: ProcessingLoaderProps): JSX.Element {
   const activeIndex = getStepIndex(status);
   const progressPercent =
@@ -31,13 +32,13 @@ export function ProcessingLoader({ status, highlightCount, wordCount }: Processi
         : Math.max(8, ((activeIndex + 1) / STATUS_STEPS.length) * 100);
 
   return (
-    <section className="w-full rounded-2xl border border-border bg-card/60 p-5 text-left">
+    <section className="w-full rounded-3xl border border-border bg-card/60 p-3 text-left sm:p-4">
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="font-display text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
             Processing
           </p>
-          <h2 className="mt-1 font-display text-lg font-semibold">
+          <h2 className="mt-1 font-display text-base font-semibold sm:text-lg">
             {status === "failed"
               ? "Processing failed"
               : STATUS_STEPS[Math.max(activeIndex, 0)]?.label ?? "Working"}
@@ -50,21 +51,21 @@ export function ProcessingLoader({ status, highlightCount, wordCount }: Processi
         ) : null}
       </div>
 
-      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-muted">
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
         <div
           className="h-full rounded-full bg-primary transition-[width] duration-500"
           style={{ width: `${progressPercent}%` }}
         />
       </div>
 
-      <ol className="mt-4 space-y-2">
+      <ol className="mt-3 space-y-1">
         {STATUS_STEPS.map((step, index) => {
           const isDone = status === "completed" || (activeIndex > index && status !== "failed");
           const isActive = activeIndex === index && status !== "completed" && status !== "failed";
           return (
             <li
               key={step.key}
-              className={`rounded-xl px-3 py-2 text-sm ${
+              className={`rounded-xl px-3 py-1.5 text-sm ${
                 isActive ? "bg-accent text-foreground" : "text-muted-foreground"
               }`}
             >
@@ -79,13 +80,13 @@ export function ProcessingLoader({ status, highlightCount, wordCount }: Processi
       </ol>
 
       {status === "completed" && wordCount !== undefined ? (
-        <p className="mt-4 text-sm text-primary">
+        <p className="mt-3 text-sm text-primary">
           {wordCount} words transcribed · {highlightCount ?? 0} accents decorated
         </p>
       ) : null}
 
       {status === "failed" ? (
-        <p className="mt-4 text-sm text-destructive">
+        <p className="mt-3 text-sm text-destructive">
           Something went wrong while processing this clip. Try uploading again.
         </p>
       ) : null}

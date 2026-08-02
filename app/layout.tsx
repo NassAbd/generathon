@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { DM_Sans, Inter, Montserrat, Rubik, Space_Grotesk } from "next/font/google";
 import type { ReactNode } from "react";
 
+import { Toaster } from "@/components/ui/Toaster";
+
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -50,7 +52,10 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
       lang="en"
       className={`${dmSans.variable} ${spaceGrotesk.variable} ${montserrat.variable} ${inter.variable} ${rubik.variable}`}
     >
-      <body className="font-sans antialiased">{children}</body>
+      <body className="font-sans antialiased">
+        {children}
+        <Toaster />
+      </body>
     </html>
   );
 }

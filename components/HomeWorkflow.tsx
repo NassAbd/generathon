@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { ProcessingLoader } from "@/components/ProcessingLoader";
 import { AppHeader } from "@/components/studio/AppHeader";
@@ -31,7 +32,6 @@ export function HomeWorkflow(): JSX.Element {
   const router = useRouter();
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [processingError, setProcessingError] = useState<string | null>(null);
   const { project } = useProjectStatus(activeProjectId);
 
   useEffect(() => {
@@ -40,14 +40,20 @@ export function HomeWorkflow(): JSX.Element {
     }
   }, [project?.id, project?.status, router]);
 
+  useEffect(() => {
+    if (project?.status === "failed") {
+      toast.error("Processing failed. Try uploading again.");
+    }
+  }, [project?.status]);
+
   const handleUploadComplete = useCallback(async (result: UploadResult): Promise<void> => {
-    setProcessingError(null);
     setActiveProjectId(result.project_id);
 
     try {
       await startVideoProcessing(result.project_id, result.video_url);
     } catch (error: unknown) {
-      setProcessingError(error instanceof Error ? error.message : "Could not start video processing.");
+      toast.error(error instanceof Error ? error.message : "Could not start video processing.");
+      setActiveProjectId(null);
     }
   }, []);
 
@@ -55,12 +61,11 @@ export function HomeWorkflow(): JSX.Element {
     async (file: File | null) => {
       if (!file || isUploading) return;
       setIsUploading(true);
-      setProcessingError(null);
       try {
         const result = await uploadVideoFile(file);
         await handleUploadComplete(result);
       } catch (error: unknown) {
-        setProcessingError(error instanceof Error ? error.message : "Upload failed.");
+        toast.error(error instanceof Error ? error.message : "Upload failed.");
       } finally {
         setIsUploading(false);
       }
@@ -68,41 +73,27 @@ export function HomeWorkflow(): JSX.Element {
     [handleUploadComplete, isUploading],
   );
 
-  const showLoader = Boolean(activeProjectId);
+  const isProcessing = Boolean(activeProjectId) && project?.status !== "completed";
   const highlightCount = useMemo(
     () => countHighlights(project?.transcript_data),
     [project?.transcript_data],
   );
 
   return (
-    <main className="flex min-h-dvh flex-col md:h-dvh md:overflow-hidden">
+    <main className="flex h-dvh max-h-dvh flex-col overflow-hidden">
       <AppHeader />
       <UploadHero
         onFile={(file) => void handleFile(file)}
-        onSample={() => {
-          // Sample CTA opens the same upload path (no mock project in production).
-          const input = document.querySelector<HTMLInputElement>('input[type="file"][accept*="video"]');
-          input?.click();
-        }}
-        disabled={isUploading || showLoader}
+        disabled={isUploading || isProcessing}
         busyLabel={isUploading ? "Uploading your footage…" : "Processing your video…"}
-        footer={
-          <>
-            {processingError ? (
-              <p className="text-sm text-destructive" role="alert">
-                {processingError}
-              </p>
-            ) : null}
-            {showLoader ? (
-              <div className="w-full">
-                <ProcessingLoader
-                  status={project?.status ?? "transcribing"}
-                  highlightCount={highlightCount}
-                  wordCount={project?.transcript_data?.length}
-                />
-              </div>
-            ) : null}
-          </>
+        mediaSlot={
+          isProcessing ? (
+            <ProcessingLoader
+              status={project?.status ?? "transcribing"}
+              highlightCount={highlightCount}
+              wordCount={project?.transcript_data?.length}
+            />
+          ) : undefined
         }
       />
     </main>

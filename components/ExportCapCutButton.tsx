@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 
 import type { ThemeId } from "@/types/theme";
 
@@ -11,11 +12,9 @@ export interface ExportCapCutButtonProps {
 
 export function ExportCapCutButton({ projectId, themeId }: ExportCapCutButtonProps): JSX.Element {
   const [isExporting, setIsExporting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function handleExport(): Promise<void> {
     setIsExporting(true);
-    setError(null);
 
     try {
       const response = await fetch(
@@ -34,24 +33,22 @@ export function ExportCapCutButton({ projectId, themeId }: ExportCapCutButtonPro
       anchor.download = `motion-decorator-${projectId.slice(0, 8)}.zip`;
       anchor.click();
       URL.revokeObjectURL(downloadUrl);
+      toast.success("CapCut draft ZIP downloaded.");
     } catch (caughtError: unknown) {
-      setError(caughtError instanceof Error ? caughtError.message : "CapCut export failed.");
+      toast.error(caughtError instanceof Error ? caughtError.message : "CapCut export failed.");
     } finally {
       setIsExporting(false);
     }
   }
 
   return (
-    <div className="flex flex-col items-start gap-2">
-      <button
-        type="button"
-        onClick={() => void handleExport()}
-        disabled={isExporting}
-        className="rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_0_30px_rgba(168,85,247,0.35)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-70"
-      >
-        {isExporting ? "Building CapCut Draft…" : "Export CapCut Draft (.zip)"}
-      </button>
-      {error && <p className="text-xs text-rose-400">{error}</p>}
-    </div>
+    <button
+      type="button"
+      onClick={() => void handleExport()}
+      disabled={isExporting}
+      className="rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_0_30px_rgba(168,85,247,0.35)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-70"
+    >
+      {isExporting ? "Building CapCut Draft…" : "Export CapCut Draft (.zip)"}
+    </button>
   );
 }
