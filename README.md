@@ -13,7 +13,7 @@
 [Overview](#-overview--vision) · [Demo](#-demo--screenshots) · [Features](#-key-features) · [Stack](#-technical-architecture--stack) · [Setup](#-getting-started--local-setup)
 </div>
 
-[![Watch the Demo Video](https://img.youtube.com/vi/qYTPJdWQOnw/maxresdefault.jpg)](https://github.com/NassAbd/generathon/blob/main/docs/screenshots/demo_generathon.mp4)
+<video src="https://github.com/user-attachments/assets/4d3e8c1f-c8de-4c40-8dd0-7f264783ef6e" width="100%" controls></video>
 
 ---
 
@@ -53,7 +53,7 @@ A **studio** that automates the pipeline end-to-end:
 
 ## 🎬 Demo & Screenshots
 
-**Demo video:** [Local MP4](docs/screenshots/demo_generathon.mp4) · [YouTube](https://youtu.be/qYTPJdWQOnw)
+**Demo video:** [GitHub Playback](https://github.com/user-attachments/assets/4d3e8c1f-c8de-4c40-8dd0-7f264783ef6e) · [YouTube](https://youtu.be/qYTPJdWQOnw)
 
 ### Landing Page (Single Viewport Upload)
 
