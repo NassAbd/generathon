@@ -11,13 +11,14 @@
 > **Transform raw video clips into viral, dynamically subtitled shorts with AI-driven karaoke captions & auto-ducked background music in 1-click.**
 
 [Overview](#-overview--vision) · [Demo](#-demo--screenshots) · [Features](#-key-features) · [Stack](#-technical-architecture--stack) · [Setup](#-getting-started--local-setup)
-<video src="docs/screenshots/demo_generathon.mp4" width="100%" controls></video>
-
 </div>
+
+<video src="https://github.com/NassAbd/generathon/raw/main/docs/screenshots/demo_generathon.mp4" width="100%" controls></video>
 
 ---
 
 ## 📑 Table of Contents
+
 
 - [Overview & Vision](#-overview--vision)
 - [Demo & Screenshots](#-demo--screenshots)
