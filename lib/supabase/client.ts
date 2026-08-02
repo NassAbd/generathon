@@ -18,6 +18,8 @@ export interface Database {
           created_at: string;
           duration_seconds: number | null;
           id: string;
+          selected_bgm_track: string | null;
+          selected_bgm_url: string | null;
           status: ProjectStatus;
           theme: string | null;
           transcript_data: TranscriptData | null;
@@ -28,6 +30,8 @@ export interface Database {
           created_at?: string;
           duration_seconds?: number | null;
           id?: string;
+          selected_bgm_track?: string | null;
+          selected_bgm_url?: string | null;
           status?: ProjectStatus;
           theme?: string | null;
           transcript_data?: TranscriptData | null;
@@ -38,6 +42,8 @@ export interface Database {
           created_at?: string;
           duration_seconds?: number | null;
           id?: string;
+          selected_bgm_track?: string | null;
+          selected_bgm_url?: string | null;
           status?: ProjectStatus;
           theme?: string | null;
           transcript_data?: TranscriptData | null;

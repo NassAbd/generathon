@@ -22,9 +22,9 @@ export function collectCoreSfxUrls(): string[] {
   ];
 }
 
-export function preloadBgmAudio(): Promise<void> {
+export function preloadBgmAudio(bgmUrl: string = CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL): Promise<void> {
   return new Promise((resolve) => {
-    const audio = new Audio(CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL);
+    const audio = new Audio(bgmUrl);
     audio.preload = "auto";
     audio.addEventListener("canplaythrough", () => resolve(), { once: true });
     audio.addEventListener("error", () => resolve(), { once: true });

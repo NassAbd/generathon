@@ -53,6 +53,8 @@ export interface VideoPlayerOverlayProps {
   videoUrl: string;
   transcript: TranscriptData;
   theme: ThemeId;
+  /** Project-persisted BGM URL — must match CapCut export selection. */
+  bgmUrl?: string;
   onActiveWordChange?: (index: number) => void;
   onVideoDimensionsChange?: (width: number, height: number) => void;
   onSpeakerOffsetChange?: (offsetPercentX: number) => void;
@@ -72,6 +74,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
       videoUrl,
       transcript,
       theme,
+      bgmUrl,
       onActiveWordChange,
       onVideoDimensionsChange,
       onSpeakerOffsetChange,
@@ -81,6 +84,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
     },
     ref,
   ) {
+    const resolvedBgmUrl = bgmUrl ?? CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL;
     const videoRef = useRef<HTMLVideoElement>(null);
     const bgmRef = useRef<HTMLAudioElement>(null);
     const activeIndexRef = useRef(-1);
@@ -347,8 +351,8 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
     }, []);
 
     useEffect(() => {
-      void preloadBgmAudio();
-    }, []);
+      void preloadBgmAudio(resolvedBgmUrl);
+    }, [resolvedBgmUrl]);
 
     useEffect(() => {
       const video = videoRef.current;
@@ -588,7 +592,7 @@ export const VideoPlayerOverlay = forwardRef<VideoPlayerOverlayHandle, VideoPlay
 
         <audio
           ref={bgmRef}
-          src={CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL}
+          src={resolvedBgmUrl}
           loop
           preload="auto"
           className="hidden"

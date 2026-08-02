@@ -84,6 +84,7 @@ export function ProjectView({ project }: ProjectViewProps): JSX.Element {
               videoUrl={project.video_url}
               transcript={transcript}
               theme={theme}
+              bgmUrl={project.selected_bgm_url ?? undefined}
               onActiveWordChange={setActiveWordIndex}
               onVideoDimensionsChange={(width, height) => {
                 setSourceVideoWidth(width);

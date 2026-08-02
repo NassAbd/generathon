@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -43,6 +43,13 @@ export interface CapCutExportInput {
   speakerOffsetPercentX?: number;
   /** Per-phrase/shot pan segments; splits the main video track when offsets differ. */
   speakerOffsetSegments?: SpeakerOffsetSegment[];
+  /** Deterministically assigned BGM URL (modulo catalog). Falls back to default. */
+  bgmUrl?: string;
+  /**
+   * When true (default for local write), mix video+BGM with FFmpeg sidechain ducking
+   * and omit the separate CapCut BGM track to avoid double music.
+   */
+  applySidechainDucking?: boolean;
 }
 
 export interface CapCutDraftBundle {
@@ -585,7 +592,10 @@ function appendAudioSegment(
   };
   audioSegment.source_timerange = { start: 0, duration: options.durationMicros };
   audioSegment.clip = null;
+  // CapCut reads segment.volume (0–1 linear). Also set last_nonzero_volume so the
+  // UI slider opens at ~12–15% instead of snapping back to 100%.
   audioSegment.volume = options.volume;
+  audioSegment.last_nonzero_volume = options.volume;
   (audioTrack.segments as DraftRecord[]).push(audioSegment);
 }
 
@@ -608,7 +618,7 @@ function collectMediaDownloadItems(projectData: CapCutProjectData): MediaDownloa
   };
 
   addItem(projectData.videoUrl, "video", true);
-  addItem(CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL, "audio");
+  addItem(projectData.bgmUrl ?? CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL, "audio");
 
   return items;
 }
@@ -1072,15 +1082,21 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
 
   // SFX track intentionally left empty — export focuses on framing + subtitles.
 
+  const bgmUrl = input.bgmUrl ?? CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL;
+
+  // Always expose BGM as its own CapCut timeline audio track so users can see
+  // and adjust it in the editor (do not omit when FFmpeg ducking was used).
   appendAudioSegment(materials, bgmTrack, {
-    url: CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL,
+    url: bgmUrl,
     startMicros: 0,
     durationMicros: durationMicros,
     materialDurationMicros: durationMicros,
     volume: CAPCUT_EXPORT_AUDIO.bgmVolume,
     renderIndex: 10500,
-    filenameFallback: "lofi_relax.mp3",
+    filenameFallback: filenameFromUrl(bgmUrl, "cartoon.mp3"),
   });
+
+  const tracks = [videoTrack, textTrack, sfxTrack, bgmTrack];
 
   const draftContent: CapCutDraftContent = {
     id: draftId,
@@ -1101,12 +1117,15 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
       app_version: "9.0.0",
       os: "mac",
     },
-    tracks: [videoTrack, textTrack, sfxTrack, bgmTrack],
+    tracks,
     materials,
     extra_info: {
       created_via: "motion-decorator",
       project_id: input.projectId,
       theme: input.theme,
+      bgm_url: bgmUrl,
+      sidechain_ducking: input.applySidechainDucking === true,
+      separate_bgm_track: true,
     },
     free_render_index_mode_on: false,
   };
@@ -1132,7 +1151,8 @@ export function buildCapCutDraft(input: CapCutExportInput): CapCutDraftBundle {
     speakerLayout.needsReframe
       ? "Video framing: single-track 9:16 crop; wide/split shots export centered (offset 0%)."
       : "Video framing: single-track, native aspect.",
-    "Audio mix: BGM ~12%. Keyword SFX generation is disabled.",
+    "Audio mix: separate CapCut BGM track (~12% volume) on its own timeline layer. Keyword SFX generation is disabled.",
+    `Assigned BGM: ${bgmUrl}`,
     "Canvas: 1080 x 1920 (9:16).",
   ].join("\n");
 
@@ -1150,6 +1170,8 @@ export interface CapCutProjectData {
   sourceVideoHeight?: number;
   speakerOffsetPercentX?: number;
   speakerOffsetSegments?: SpeakerOffsetSegment[];
+  bgmUrl?: string;
+  applySidechainDucking?: boolean;
 }
 
 export interface CapCutDirectWriteResult {
@@ -1165,6 +1187,8 @@ export interface CapCutDirectWriteResult {
   skippedMediaDownloads: MediaDownloadSkip[];
   removedMissingMediaSegments: number;
   removedMissingMediaMaterials: number;
+  bgmUrl: string;
+  sidechainDuckingApplied: boolean;
 }
 
 const GENERATED_MATERIAL_BUCKETS = [
@@ -1255,6 +1279,13 @@ function enrichClipForDraftInfo(clip: unknown): DraftRecord | null {
 function enrichSegmentForDraftInfo(segment: DraftRecord, trackType: string): DraftRecord {
   const isAudio = trackType === "audio";
   const enrichedClip = enrichClipForDraftInfo(isAudio ? null : segment.clip);
+  const volume = typeof segment.volume === "number" ? segment.volume : 1.0;
+  const lastNonzeroVolume =
+    typeof segment.last_nonzero_volume === "number"
+      ? segment.last_nonzero_volume
+      : volume > 0
+        ? volume
+        : 1.0;
 
   return {
     ...DRAFT_INFO_SEGMENT_BASE,
@@ -1262,7 +1293,8 @@ function enrichSegmentForDraftInfo(segment: DraftRecord, trackType: string): Dra
     speed: typeof segment.speed === "number" ? segment.speed : 1.0,
     reverse: Boolean(segment.reverse),
     visible: segment.visible !== false,
-    volume: typeof segment.volume === "number" ? segment.volume : 1.0,
+    volume,
+    last_nonzero_volume: lastNonzeroVolume,
     enable_lut: !isAudio,
     enable_adjust: !isAudio,
     enable_hsl: !isAudio,
@@ -1640,10 +1672,86 @@ async function resolveCapCutDraftFolder(capCutRoot: string): Promise<{ folderPat
   };
 }
 
+/**
+ * CapCut timeline exports keep BGM as a separate editable audio layer.
+ * Baking FFmpeg sidechain into the video would either hide that layer or
+ * double the music — so local CapCut write skips burn-in by default.
+ */
+async function tryApplySidechainDuckingToDraftFolder(
+  draftFolderPath: string,
+  projectData: CapCutProjectData,
+): Promise<{ applied: boolean; duckedVideoPath: string | null }> {
+  // Opt-in only: CapCut path wants a dedicated BGM track, not baked audio.
+  const wantDucking = projectData.applySidechainDucking === true;
+  if (!wantDucking) {
+    return { applied: false, duckedVideoPath: null };
+  }
+
+  const videoFilename = filenameFromUrl(projectData.videoUrl, "source-video.mp4");
+  const bgmUrl = projectData.bgmUrl ?? CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL;
+  const bgmFilename = filenameFromUrl(bgmUrl, "cartoon.mp3");
+  const videoPath = absoluteAssetPath(draftFolderPath, "video", videoFilename);
+  const bgmPath = absoluteAssetPath(draftFolderPath, "audio", bgmFilename);
+
+  if (!(await pathExists(videoPath)) || !(await pathExists(bgmPath))) {
+    console.warn("[FFmpeg] Skipping sidechain ducking — video or BGM file missing locally.");
+    return { applied: false, duckedVideoPath: null };
+  }
+
+  try {
+    const { defaultDuckedOutputPath, mixVideoWithSidechainDucking } = await import(
+      "@/lib/ffmpeg/mixWithSidechainDucking"
+    );
+    const duckedVideoPath = defaultDuckedOutputPath(videoPath);
+    await mixVideoWithSidechainDucking({
+      videoPath,
+      bgmPath,
+      outputPath: duckedVideoPath,
+      musicVolume: CAPCUT_EXPORT_AUDIO.sidechainMusicVolume,
+      threshold: 0.05,
+      ratio: 4,
+      attack: 15,
+      release: 350,
+      copyVideo: true,
+    });
+
+    // Replace the source video with the ducked mix (opt-in baked path only).
+    await copyFile(duckedVideoPath, videoPath);
+    return { applied: true, duckedVideoPath };
+  } catch (error: unknown) {
+    console.warn(
+      "[FFmpeg] Sidechain ducking unavailable; CapCut BGM track remains on the timeline.",
+      error instanceof Error ? error.message : error,
+    );
+    return { applied: false, duckedVideoPath: null };
+  }
+}
+
 export async function writeDirectToCapCut(
   projectId: string,
   projectData: CapCutProjectData,
 ): Promise<CapCutDirectWriteResult> {
+  const bgmUrl = projectData.bgmUrl ?? CAPCUT_EXPORT_AUDIO.DEFAULT_BGM_URL;
+  const projectDataWithBgm: CapCutProjectData = {
+    ...projectData,
+    bgmUrl,
+    // CapCut draft must keep an explicit BGM timeline layer.
+    applySidechainDucking: false,
+  };
+
+  const capCutRoot = getCapCutDraftsRoot();
+  const { folderPath: draftFolderPath, usedExistingFolder } = await resolveCapCutDraftFolder(capCutRoot);
+  const draftContentPath = path.join(draftFolderPath, "draft_content.json");
+  const draftInfoPath = path.join(draftFolderPath, "draft_info.json");
+  const draftMetaInfoPath = path.join(draftFolderPath, "draft_meta_info.json");
+
+  await mkdir(path.join(draftFolderPath, "assets", "video"), { recursive: true });
+  await mkdir(path.join(draftFolderPath, "assets", "audio"), { recursive: true });
+
+  const mediaDownload = await downloadDraftMedia(draftFolderPath, projectDataWithBgm);
+  // Still invoked for opt-in callers; CapCut local path forces ducking off above.
+  const ducking = await tryApplySidechainDuckingToDraftFolder(draftFolderPath, projectDataWithBgm);
+
   const { draftContent } = buildCapCutDraft({
     projectId,
     projectName: projectData.projectName,
@@ -1655,19 +1763,11 @@ export async function writeDirectToCapCut(
     sourceVideoHeight: projectData.sourceVideoHeight,
     speakerOffsetPercentX: projectData.speakerOffsetPercentX,
     speakerOffsetSegments: projectData.speakerOffsetSegments,
+    bgmUrl,
+    applySidechainDucking: false,
   });
   logTextSegmentScaleSample(draftContent);
 
-  const capCutRoot = getCapCutDraftsRoot();
-  const { folderPath: draftFolderPath, usedExistingFolder } = await resolveCapCutDraftFolder(capCutRoot);
-  const draftContentPath = path.join(draftFolderPath, "draft_content.json");
-  const draftInfoPath = path.join(draftFolderPath, "draft_info.json");
-  const draftMetaInfoPath = path.join(draftFolderPath, "draft_meta_info.json");
-
-  await mkdir(path.join(draftFolderPath, "assets", "video"), { recursive: true });
-  await mkdir(path.join(draftFolderPath, "assets", "audio"), { recursive: true });
-
-  const mediaDownload = await downloadDraftMedia(draftFolderPath, projectData);
   await applyAbsoluteMediaPaths(draftContent, draftFolderPath);
   const mediaFilter = await filterDraftToExistingMedia(draftContent, draftFolderPath);
 
@@ -1686,6 +1786,10 @@ export async function writeDirectToCapCut(
     await writeFile(timelineDraftInfoPath, mergedJson, "utf8");
   }
 
+  console.log(
+    `[BGM Selection] CapCut draft includes separate BGM track → ${filenameFromUrl(bgmUrl, "cartoon.mp3")} @ volume ${CAPCUT_EXPORT_AUDIO.bgmVolume}`,
+  );
+
   return {
     draftId: typeof mergedDraftInfo.id === "string" ? mergedDraftInfo.id : draftContent.id,
     draftFolderPath,
@@ -1699,5 +1803,7 @@ export async function writeDirectToCapCut(
     skippedMediaDownloads: mediaDownload.skipped,
     removedMissingMediaSegments: mediaFilter.removedSegmentCount,
     removedMissingMediaMaterials: mediaFilter.removedMaterialCount,
+    bgmUrl,
+    sidechainDuckingApplied: ducking.applied,
   };
 }

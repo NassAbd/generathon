@@ -591,9 +591,16 @@ export const CAPCUT_EXPORT_AUDIO = {
   /** @deprecated Use SFX_WHOOSH_URL */
   SFX_POP_URL:
     "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/sound_effects/whoosh.mp3",
+  /** Fallback when modulo Supabase assignment is unavailable. Prefer resolveBgmTrackForProject(). */
   DEFAULT_BGM_URL:
-    "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/bgm/lofi_relax.mp3",
+    "https://dzgekeibtcgavrzxcylr.supabase.co/storage/v1/object/public/assets/bgm/cartoon.mp3",
+  /**
+   * CapCut timeline BGM level (segment.volume / last_nonzero_volume, 0–1 linear).
+   * ~12% so CapCut's native volume slider opens pre-adjusted, not at 100%.
+   */
   bgmVolume: 0.12,
+  /** FFmpeg sidechain base music gain before ducking. */
+  sidechainMusicVolume: 0.15,
   sfxVolume: 0.8,
   /** Minimum gap between SFX triggers (seconds). */
   sfxCooldownSeconds: 1.5,

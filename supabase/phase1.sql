@@ -9,7 +9,9 @@ create table if not exists public.projects (
   theme text default 'pop_3d',
   transcript_data jsonb,
   duration_seconds float,
-  capcut_draft_url text
+  capcut_draft_url text,
+  selected_bgm_track text,
+  selected_bgm_url text
 );
 
 insert into storage.buckets (id, name, public)
