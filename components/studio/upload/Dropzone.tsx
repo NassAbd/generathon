@@ -44,7 +44,7 @@ export function Dropzone({
         }
       }}
       className={cn(
-        "group relative w-full rounded-3xl border-2 border-dashed border-border bg-card/60 px-6 py-3 text-center transition-all duration-300",
+        "group relative w-full rounded-3xl border-2 border-dashed border-border bg-card/60 px-8 py-7 text-center transition-all duration-300 sm:px-10 sm:py-9",
         !disabled && "cursor-pointer hover:border-primary/70 hover:bg-card",
         dragging && "border-primary bg-primary/5 shadow-stage",
         disabled && "cursor-wait opacity-75",
@@ -61,15 +61,15 @@ export function Dropzone({
           event.target.value = "";
         }}
       />
-      <div className="flex flex-col items-center gap-1.5">
-        <span className="grid size-9 place-items-center rounded-2xl bg-primary/15 text-primary transition-transform duration-300 group-hover:-translate-y-0.5">
-          <UploadCloud className="size-4" />
+      <div className="flex flex-col items-center gap-2.5 sm:gap-3">
+        <span className="grid size-12 place-items-center rounded-2xl bg-primary/15 text-primary transition-transform duration-300 group-hover:-translate-y-0.5 sm:size-14">
+          <UploadCloud className="size-5 sm:size-6" />
         </span>
-        <p className="font-display text-sm font-semibold">
+        <p className="font-display text-base font-semibold sm:text-lg">
           {disabled ? busyLabel : "Drop your video here"}
         </p>
-        <p className="text-xs text-muted-foreground">
-          MP4, MOV or WebM · up to 50 MB · captions generated automatically
+        <p className="text-xs text-muted-foreground sm:text-sm">
+          MP4, MOV or WebM · up to 50 MB
         </p>
       </div>
     </div>
