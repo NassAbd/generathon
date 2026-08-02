@@ -44,6 +44,13 @@ const rubik = Rubik({
 export const metadata: Metadata = {
   title: "Subtitler Studio",
   description: "Turn raw footage into subtitled shorts with karaoke captions and CapCut export.",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "any" },
+    ],
+    apple: [{ url: "/apple-icon", sizes: "180x180", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>): JSX.Element {

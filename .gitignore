@@ -46,12 +46,17 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Documentation
+# Documentation (keep product README + screenshot placeholders trackable)
 *.md
 *.txt
 docs/
 doc/
 documentation/
+!README.md
+!TECHNICAL_CONSTRAINTS.md
+!docs/
+!docs/screenshots/
+!docs/screenshots/.gitkeep
 
 node_modules/
 

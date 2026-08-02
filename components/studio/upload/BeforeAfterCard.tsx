@@ -1,4 +1,4 @@
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Music } from "lucide-react";
 
 import {
   MEDIA_FRAME_HEIGHT_CLASS,
@@ -65,10 +65,15 @@ export function BeforeAfterCard(): JSX.Element {
             loading="lazy"
             className="h-full w-full object-cover"
           />
-          <figcaption className="absolute left-2 top-2 sm:left-3 sm:top-3">
-            <Pill label="AI enhanced" tone="accent" />
-          </figcaption>
-          <div className="absolute inset-x-2 bottom-2 rounded-lg bg-black/75 px-2 py-1.5 text-center backdrop-blur-sm sm:inset-x-2.5 sm:bottom-2.5">
+
+          <div
+            className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-full border border-white/10 bg-black/75 px-2 py-1 text-[10px] font-semibold text-emerald-400 backdrop-blur-md sm:right-3 sm:top-3 sm:gap-1.5 sm:px-2.5 sm:text-[11px]"
+            aria-label="Background music added"
+          >
+            <Music className="size-3 animate-pulse sm:size-3.5" aria-hidden />
+            <span className="tracking-wide">Music</span>
+          </div>
+          <div className="absolute inset-x-2 bottom-2 z-10 rounded-lg bg-black/75 px-2 py-1.5 text-center backdrop-blur-sm sm:inset-x-2.5 sm:bottom-2.5">
             <p className="font-display text-[10px] font-bold uppercase leading-tight tracking-tight text-white sm:text-xs">
               THIS CHANGED <span style={{ color: "#FFE600" }}>EVERYTHING</span>
             </p>
